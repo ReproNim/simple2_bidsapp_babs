@@ -4,7 +4,7 @@ if [ -f ".env" ]; then
 fi
 
 # Set up logging - redirect all further output to a log file while still showing in console
-LOG_FILE="$SCRATCH_DIR_ANTS/babs_script1030_$(date +%Y%m%d_%H%M%S).log"
+LOG_FILE="$SCRATCH_DIR_ANTS/babs_script1220_$(date +%Y%m%d_%H%M%S).log"
 echo "=== Script started at $(date) ===" | tee $LOG_FILE
 exec > >(tee -a "$LOG_FILE") 2>&1
 
@@ -25,9 +25,9 @@ echo "Processing site: $SITE_NAME for dataset: $DATASET_NAME"
 
 source ~/.bashrc
 micromamba activate babs
-mkdir -p $SCRATCH_DIR/${DATASET_NAME}_1030
-mkdir -p $SCRATCH_DIR_COMPUTE/ants_compute_1030
-cd $SCRATCH_DIR/${DATASET_NAME}_1030
+mkdir -p $SCRATCH_DIR/${DATASET_NAME}_1220
+mkdir -p $SCRATCH_DIR_COMPUTE/ants_compute_1220
+cd $SCRATCH_DIR/${DATASET_NAME}_1220
 echo "Current directory: $PWD"
 
 # Check if container setup is already done
@@ -35,8 +35,8 @@ if [ -d "${PWD}/ants_bidsapp-container" ] && [ -f "${PWD}/ants_bidsapp-container
     echo "Container already set up, skipping container setup steps."
 else
     echo "Setting up container..."
-    if [ ! -f "${PWD}/ants_bidsapp1030.sif" ]; then
-        cp $BASE_DIR/ants_bidsapp1030.sif .
+    if [ ! -f "${PWD}/ants_bidsapp1220.sif" ]; then
+        cp $BASE_DIR/ants_bidsapp1220.sif .
     fi
     
     # Create the container dataset if it doesn't exist
@@ -48,26 +48,26 @@ else
     # Add the container if it's not already added
     if ! datalad containers-list 2>/dev/null | grep -q "ants-bidsapp-0-1-0"; then
         datalad containers-add \
-            --url ${PWD}/../ants_bidsapp1030.sif \
+            --url ${PWD}/../ants_bidsapp1220.sif \
             ants-bidsapp-0-1-0
     fi
     cd ../
     
     # Remove the SIF file if it exists
-    if [ -f "${PWD}/ants_bidsapp1030.sif" ]; then
-        rm -rf ants_bidsapp1030.sif
+    if [ -f "${PWD}/ants_bidsapp1220.sif" ]; then
+        rm -rf ants_bidsapp1220.sif
     fi
 fi
 
 # Create the ANTs BIDS App config YAML file if it doesn't exist
-CONFIG_PATH="$SCRATCH_DIR/${DATASET_NAME}_1030/config_ants1030.yaml"
+CONFIG_PATH="$SCRATCH_DIR/${DATASET_NAME}_1220/config_ants1220.yaml"
 if [ ! -f "$CONFIG_PATH" ]; then
     echo "Creating ANTs BIDS App config YAML file..."
     
     # Define the actual paths with expanded variables
     BIDS_ORIGIN="$DATALAD_SET_DIR/$DATASET_NAME/$SITE_NAME/sourcedata/raw"
     NIDM_ORIGIN="$DATALAD_SET_DIR/$DATASET_NAME/$SITE_NAME/derivatives/nidm"
-    COMPUTE_SPACE="$SCRATCH_DIR_COMPUTE/ants_compute_1030"
+    COMPUTE_SPACE="$SCRATCH_DIR_COMPUTE/ants_compute_1220"
     
     # Verify BIDS dataset exists
     if [ ! -d "$BIDS_ORIGIN" ]; then
@@ -76,7 +76,7 @@ if [ ! -f "$CONFIG_PATH" ]; then
     fi
     
     cat > "$CONFIG_PATH" << EOL
-# This is a config yaml file for ants BIDS App (updated 1030)
+# This is a config yaml file for ants BIDS App (updated 1220)
 # Input datasets configuration
 input_datasets:
     BIDS:
@@ -109,8 +109,8 @@ cluster_resources:
         #SBATCH --partition=mit_preemptable
         #SBATCH --cpus-per-task=8
         #SBATCH --mem=32G
-        #SBATCH --time=15:00:00
-        #SBATCH --job-name=ants_bidsapp
+        #SBATCH --time=18:00:00
+        #SBATCH --job-name=ants_bidsapp_1220
 # Necessary commands to be run first:
 script_preamble: |
     source ~/.bashrc 
@@ -119,7 +119,7 @@ script_preamble: |
 # Where to run the jobs:
 job_compute_space: $COMPUTE_SPACE
 required_files:
-    \$INPUT_DATASET_1:
+    \$INPUT_DATASET_#1:
         - "anat/*_T1w.nii*"
 # Alert messages that might be found in log files of failed jobs:
 alert_log_messages:
@@ -135,7 +135,7 @@ else
     echo "Config file already exists at $CONFIG_PATH, skipping creation"
 fi
 
-cd $SCRATCH_DIR/${DATASET_NAME}_1030
+cd $SCRATCH_DIR/${DATASET_NAME}_1220
 
 # Check if NIDM directory exists for incremental NIDM building
 NIDM_DIR="$DATALAD_SET_DIR/$DATASET_NAME/$SITE_NAME/derivatives/nidm"
@@ -150,12 +150,12 @@ fi
 babs init \
     --container_ds ${PWD}/ants_bidsapp-container \
     --container_name ants-bidsapp-0-1-0 \
-    --container_config $SCRATCH_DIR/${DATASET_NAME}_1030/config_ants1030.yaml \
+    --container_config $SCRATCH_DIR/${DATASET_NAME}_1220/config_ants1220.yaml \
     --processing_level subject \
     --queue slurm \
-    $SCRATCH_DIR/${DATASET_NAME}_1030/ants_bidsapp_${SITE_NAME}_1030/
+    $SCRATCH_DIR/${DATASET_NAME}_1220/ants_bidsapp_${SITE_NAME}_1220/
 
-cd $SCRATCH_DIR/${DATASET_NAME}_1030/ants_bidsapp_${SITE_NAME}_1030
+cd $SCRATCH_DIR/${DATASET_NAME}_1220/ants_bidsapp_${SITE_NAME}_1220
 
 # Optional: First check the setup before submitting
 echo "Checking BABS setup..."
@@ -172,5 +172,5 @@ else
 fi
 
 echo "=== Script completed at $(date) ===" | tee -a $LOG_FILE
-echo "Output directory: $SCRATCH_DIR/${DATASET_NAME}_1030/ants_bidsapp_${SITE_NAME}_1030/"
+echo "Output directory: $SCRATCH_DIR/${DATASET_NAME}_1220/ants_bidsapp_${SITE_NAME}_1220/"
 echo "Log file: $LOG_FILE"

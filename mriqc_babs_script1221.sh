@@ -4,79 +4,86 @@ if [ -f ".env" ]; then
 fi
 
 # Set up logging - redirect all further output to a log file while still showing in console
-LOG_FILE="$SCRATCH_DIR_ANTS/babs_script1023_$(date +%Y%m%d_%H%M%S).log"
+LOG_FILE="$SCRATCH_DIR_MRIQC/babs_script1221_$(date +%Y%m%d_%H%M%S).log"
 echo "=== Script started at $(date) ===" | tee $LOG_FILE
 exec > >(tee -a "$LOG_FILE") 2>&1
 
-echo "Environment: SCRATCH_DIR=$SCRATCH_DIR_ANTS, BASE_DIR=$BASE_DIR"
+echo "Environment: SCRATCH_DIR=$SCRATCH_DIR_MRIQC, BASE_DIR=$BASE_DIR"
 
-# Accept dataset name and input path as arguments
-SITE_NAME="$1"  # Accept input path as first argument
+# Accept dataset name and site name as arguments
+SITE_NAME="$1"  # Accept site name as first argument
 DATASET_NAME="$2"  # Accept dataset name as second argument
-SCRATCH_DIR=$SCRATCH_DIR_ANTS
+SCRATCH_DIR=$SCRATCH_DIR_MRIQC
 
 if [ -z "$SITE_NAME" ] || [ -z "$DATASET_NAME" ]; then
     echo "Error: Missing arguments. Usage: $0 <site_name> <dataset_name>"
     exit 1
 fi
 
-# Extract site name from input path
 echo "Processing site: $SITE_NAME for dataset: $DATASET_NAME"
 
 source ~/.bashrc
 micromamba activate babs
-mkdir -p $SCRATCH_DIR/${DATASET_NAME}_1023
-mkdir -p $SCRATCH_DIR_COMPUTE/ants_compute_1023
-cd $SCRATCH_DIR/${DATASET_NAME}_1023
+mkdir -p $SCRATCH_DIR/${DATASET_NAME}_1221
+mkdir -p $SCRATCH_DIR_COMPUTE/mriqc_compute_1221
+cd $SCRATCH_DIR/${DATASET_NAME}_1221
 echo "Current directory: $PWD"
 
 # Check if container setup is already done
-if [ -d "${PWD}/ants_bidsapp-container" ] && [ -f "${PWD}/ants_bidsapp-container/.datalad/config" ] && grep -q "ants-bidsapp-0-1-0" "${PWD}/ants_bidsapp-container/.datalad/config" 2>/dev/null; then
+if [ -d "${PWD}/mriqc-container" ] && [ -f "${PWD}/mriqc-container/.datalad/config" ] && grep -q "mriqc-nidm-bidsapp-0-1-0" "${PWD}/mriqc-container/.datalad/config" 2>/dev/null; then
     echo "Container already set up, skipping container setup steps."
 else
     echo "Setting up container..."
-    if [ ! -f "${PWD}/ants_bidsapp1023.sif" ]; then
-        cp $BASE_DIR/ants_bidsapp1023.sif .
+    if [ ! -f "${PWD}/mriqc-nidm_bidsapp1221.sif" ]; then
+        if [ -f "/home/yibei/simple2_bidsapp_babs/mriqc-nidm_bidsapp1221.sif" ]; then
+            echo "Copying mriqc-nidm_bidsapp1221.sif from simple2_bidsapp_babs directory"
+            cp /home/yibei/simple2_bidsapp_babs/mriqc-nidm_bidsapp1221.sif .
+        elif [ -f "/orcd/home/002/yibei/simple2_bidsapp_babs/mriqc-nidm_bidsapp1221.sif" ]; then
+            echo "Copying mriqc-nidm_bidsapp1221.sif from orcd directory"
+            cp /orcd/home/002/yibei/simple2_bidsapp_babs/mriqc-nidm_bidsapp1221.sif .
+        else
+            echo "ERROR: Cannot find container file. Please ensure mriqc-nidm_bidsapp1221.sif exists."
+            exit 1
+        fi
     fi
-    
+
     # Create the container dataset if it doesn't exist
-    if [ ! -d "${PWD}/ants_bidsapp-container" ]; then
-        datalad create -D "ants BIDS App" ants_bidsapp-container
+    if [ ! -d "${PWD}/mriqc-container" ]; then
+        datalad create -D "MRIQC-NIDM BIDS App 1221" mriqc-container
     fi
-    
-    cd ants_bidsapp-container
+
+    cd mriqc-container
     # Add the container if it's not already added
-    if ! datalad containers-list 2>/dev/null | grep -q "ants-bidsapp-0-1-0"; then
+    if ! datalad containers-list 2>/dev/null | grep -q "mriqc-nidm-bidsapp-0-1-0"; then
         datalad containers-add \
-            --url ${PWD}/../ants_bidsapp1023.sif \
-            ants-bidsapp-0-1-0
+            --url ${PWD}/../mriqc-nidm_bidsapp1221.sif \
+            mriqc-nidm-bidsapp-0-1-0
     fi
     cd ../
-    
+
     # Remove the SIF file if it exists
-    if [ -f "${PWD}/ants_bidsapp1023.sif" ]; then
-        rm -rf ants_bidsapp1023.sif
+    if [ -f "${PWD}/mriqc-nidm_bidsapp1221.sif" ]; then
+        rm -rf mriqc-nidm_bidsapp1221.sif
     fi
 fi
 
-# Create the ANTs BIDS App config YAML file if it doesn't exist
-CONFIG_PATH="$SCRATCH_DIR/${DATASET_NAME}_1023/config_ants1023.yaml"
+# Define origin URLs with expanded variables
+BIDS_ORIGIN="$DATALAD_SET_DIR/$DATASET_NAME/$SITE_NAME/sourcedata/raw"
+NIDM_ORIGIN="$DATALAD_SET_DIR/$DATASET_NAME/$SITE_NAME/derivatives/nidm"
+COMPUTE_SPACE="$SCRATCH_DIR_COMPUTE/mriqc_compute_1221"
+
+# Verify BIDS dataset exists
+if [ ! -d "$BIDS_ORIGIN" ]; then
+    echo "ERROR: BIDS dataset not found at $BIDS_ORIGIN"
+    exit 1
+fi
+
+# Create the MRIQC BIDS App config YAML file if it doesn't exist
+CONFIG_PATH="$SCRATCH_DIR/${DATASET_NAME}_1221/config_mriqc1221.yaml"
 if [ ! -f "$CONFIG_PATH" ]; then
-    echo "Creating ANTs BIDS App config YAML file..."
-    
-    # Define the actual paths with expanded variables
-    BIDS_ORIGIN="$DATALAD_SET_DIR/$DATASET_NAME/$SITE_NAME/sourcedata/raw"
-    NIDM_ORIGIN="$DATALAD_SET_DIR/$DATASET_NAME/$SITE_NAME/derivatives/nidm"
-    COMPUTE_SPACE="$SCRATCH_DIR_COMPUTE/ants_compute_1023"
-    
-    # Verify BIDS dataset exists
-    if [ ! -d "$BIDS_ORIGIN" ]; then
-        echo "ERROR: BIDS dataset not found at $BIDS_ORIGIN"
-        exit 1
-    fi
-    
+    echo "Creating MRIQC BIDS App config YAML file..."
     cat > "$CONFIG_PATH" << EOL
-# This is a config yaml file for ants BIDS App (updated 1023)
+# This is a config yaml file for MRIQC BIDS App (updated 1221)
 # Input datasets configuration
 input_datasets:
     BIDS:
@@ -94,32 +101,34 @@ input_datasets:
 # Arguments passed to the application inside the container
 bids_app_args:
     \$SUBJECT_SELECTION_FLAG: "--participant_label"
-    --num-threads: "8"
+    --mem: "16G"
+    --nprocs: "12"
+    --omp-nthreads: "8"
 singularity_args:
     - --userns
     - --no-home
     - --writable-tmpfs
 # Output foldername(s) to be zipped:
 zip_foldernames:
-    ants_bidsapp: "0-1-0"
+    mriqc_nidm: "0-1-0"
 # How much cluster resources it needs:
 cluster_resources:
     interpreting_shell: "/bin/bash"
     customized_text: |
         #SBATCH --partition=mit_preemptable
-        #SBATCH --cpus-per-task=8
-        #SBATCH --mem=24G
-        #SBATCH --time=12:00:00
-        #SBATCH --job-name=ants_bidsapp
+        #SBATCH --cpus-per-task=12
+        #SBATCH --mem=18G
+        #SBATCH --time=00:25:00
+        #SBATCH --job-name=mriqc_babs_1221
 # Necessary commands to be run first:
 script_preamble: |
-    source ~/.bashrc 
+    source ~/.bashrc
     micromamba activate babs
     module load apptainer
 # Where to run the jobs:
 job_compute_space: $COMPUTE_SPACE
 required_files:
-    \$INPUT_DATASET_1:
+    \$INPUT_DATASET_#1:
         - "anat/*_T1w.nii*"
 # Alert messages that might be found in log files of failed jobs:
 alert_log_messages:
@@ -135,7 +144,7 @@ else
     echo "Config file already exists at $CONFIG_PATH, skipping creation"
 fi
 
-cd $SCRATCH_DIR/${DATASET_NAME}_1023
+cd $SCRATCH_DIR/${DATASET_NAME}_1221
 
 # Check if NIDM directory exists for incremental NIDM building
 NIDM_DIR="$DATALAD_SET_DIR/$DATASET_NAME/$SITE_NAME/derivatives/nidm"
@@ -145,17 +154,16 @@ else
     echo "No NIDM directory found - NIDM will be created from scratch"
 fi
 
-
 # Initialize BABS with the dataset-specific output directory
 babs init \
-    --container_ds ${PWD}/ants_bidsapp-container \
-    --container_name ants-bidsapp-0-1-0 \
-    --container_config $SCRATCH_DIR/${DATASET_NAME}_1023/config_ants1023.yaml \
+    --container_ds ${PWD}/mriqc-container \
+    --container_name mriqc-nidm-bidsapp-0-1-0 \
+    --container_config $SCRATCH_DIR/${DATASET_NAME}_1221/config_mriqc1221.yaml \
     --processing_level subject \
     --queue slurm \
-    $SCRATCH_DIR/${DATASET_NAME}_1023/ants_bidsapp_${SITE_NAME}_1023/
+    $SCRATCH_DIR/${DATASET_NAME}_1221/mriqc_bidsapp_${SITE_NAME}_1221/
 
-cd $SCRATCH_DIR/${DATASET_NAME}_1023/ants_bidsapp_${SITE_NAME}_1023
+cd $SCRATCH_DIR/${DATASET_NAME}_1221/mriqc_bidsapp_${SITE_NAME}_1221
 
 # Optional: First check the setup before submitting
 echo "Checking BABS setup..."
@@ -172,5 +180,5 @@ else
 fi
 
 echo "=== Script completed at $(date) ===" | tee -a $LOG_FILE
-echo "Output directory: $SCRATCH_DIR/${DATASET_NAME}_1023/ants_bidsapp_${SITE_NAME}_1023/"
+echo "Output directory: $SCRATCH_DIR/${DATASET_NAME}_1221/mriqc_bidsapp_${SITE_NAME}_1221/"
 echo "Log file: $LOG_FILE"
