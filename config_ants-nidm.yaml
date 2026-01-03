@@ -1,0 +1,51 @@
+# This is a config yaml file for ANTs BIDS App
+# Input datasets configuration
+input_datasets:
+    BIDS:
+        required_files:
+            - "anat/*_T1w.nii*"
+        is_zipped: false
+        origin_url: "${BIDS_ORIGIN}"
+        path_in_babs: inputs/data/BIDS
+    NIDM:
+        required_files:
+            - "nidm.ttl"
+        is_zipped: false
+        origin_url: "${NIDM_ORIGIN}"
+        path_in_babs: inputs/data/NIDM
+# Arguments passed to the application inside the container
+bids_app_args:
+    $SUBJECT_SELECTION_FLAG: "--participant_label"
+    --num-threads: "8"
+singularity_args:
+    - --userns
+    - --no-home
+    - --writable-tmpfs
+# Output foldername(s) to be zipped:
+zip_foldernames:
+    ants-nidm_bidsapp: "0-1-0"
+# How much cluster resources it needs:
+cluster_resources:
+    interpreting_shell: "/bin/bash"
+    customized_text: |
+        #SBATCH --partition=mit_preemptable
+        #SBATCH --cpus-per-task=8
+        #SBATCH --mem=32G
+        #SBATCH --time=18:00:00
+        #SBATCH --job-name=ants_bidsapp_${RUN_DATE}
+# Necessary commands to be run first:
+script_preamble: |
+    source ~/.bashrc
+    micromamba activate babs
+    module load apptainer
+# Where to run the jobs:
+job_compute_space: "${COMPUTE_SPACE}"
+required_files:
+    $INPUT_DATASET_#1:
+        - "anat/*_T1w.nii*"
+# Alert messages that might be found in log files of failed jobs:
+alert_log_messages:
+    stdout:
+        - "ERROR:"
+        - "Cannot allocate memory"
+        - "Numerical result out of range"
