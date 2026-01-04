@@ -34,7 +34,7 @@ cluster_resources:
         #SBATCH --cpus-per-task=12
         #SBATCH --mem=18G
         #SBATCH --time=00:25:00
-        #SBATCH --job-name=mriqc_babs_${RUN_DATE}
+        #SBATCH --job-name=mriqc-nidm_bidsapp_${RUN_DATE}
 # Necessary commands to be run first:
 script_preamble: |
     source ~/.bashrc
@@ -43,7 +43,7 @@ script_preamble: |
 # Where to run the jobs:
 job_compute_space: "${COMPUTE_SPACE}"
 required_files:
-    $INPUT_DATASET_#1:
+    "$INPUT_DATASET_#1":
         - "anat/*_T1w.nii*"
 # Alert messages that might be found in log files of failed jobs:
 alert_log_messages:

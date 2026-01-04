@@ -128,20 +128,27 @@ babs_prepare_yaml_config() {
 
     echo "Creating config YAML file from template..."
 
-    # Create output with variable substitutions
-    local content
-    content=$(cat "$template_path")
+    # Copy template to output first
+    cp "$template_path" "$output_path"
 
+    # Perform substitutions using sed for more reliable pattern matching
     while [ $# -gt 0 ]; do
         local subst="$1"
         local var="${subst%%=*}"
         local value="${subst#*=}"
-        content="${content//\${${var}}/${value}}"
-        content="${content//\$${var}/${value}}"
+
+        # Escape special characters in the replacement value for sed
+        # Replace \ with \\, & with \&, and / with \/
+        local escaped_value
+        escaped_value=$(printf '%s\n' "$value" | sed 's/[[\.*^$()+?{|]/\\&/g; s/&/\\&/g; s/\\/\\\\/g; s/\//\\\//g')
+
+        # Replace both ${VAR} and $VAR forms
+        sed -i "s/\${${var}}/${escaped_value}/g" "$output_path"
+        sed -i "s/\$${var}/${escaped_value}/g" "$output_path"
+
         shift
     done
 
-    echo "$content" > "$output_path"
     echo "YAML config file created at $output_path"
 }
 

@@ -34,7 +34,7 @@ cluster_resources:
         #SBATCH --cpus-per-task=8
         #SBATCH --mem=24G
         #SBATCH --time=03:30:00
-        #SBATCH --job-name=fs_bidsapp_${RUN_DATE}
+        #SBATCH --job-name=fs-nidm_bidsapp_${RUN_DATE}
 # Necessary commands to be run first:
 script_preamble: |
     source ~/.bashrc
