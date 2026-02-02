@@ -43,17 +43,7 @@ PROCESSING_LEVEL="${3:-subject}"  # Default to "subject" if not provided
 # Initialize run date (auto-generate or use env var)
 babs_init_run_date
 
-# Validate processing level
-if [ "$PROCESSING_LEVEL" != "subject" ] && [ "$PROCESSING_LEVEL" != "session" ]; then
-    echo "ERROR: processing_level must be either 'subject' or 'session'" >&2
-    echo "  Provided: '$PROCESSING_LEVEL'" >&2
-    echo "  Usage: $0 <site_name> <dataset_name> [processing_level]" >&2
-    echo "  Example: $0 Caltech study-ABIDE subject" >&2
-    echo "  Example: $0 Brown study-ADHD200 session" >&2
-    exit 1
-fi
-
-# Validate arguments
+# Validate arguments (includes processing level validation)
 babs_validate_args "$SITE_NAME" "$DATASET_NAME" "$PROCESSING_LEVEL"
 
 # ============================================================================
