@@ -212,13 +212,25 @@ babs_print_completion() {
 }
 
 # Validate arguments
-# Usage: babs_validate_args <site_name> <dataset_name>
+# Usage: babs_validate_args <site_name> <dataset_name> [processing_level]
 babs_validate_args() {
     local site_name="$1"
     local dataset_name="$2"
+    local processing_level="$3"
 
     if [ -z "$site_name" ] || [ -z "$dataset_name" ]; then
-        echo "Error: Missing arguments. Usage: $0 <site_name> <dataset_name>"
+        echo "Error: Missing arguments. Usage: $0 <site_name> <dataset_name> [processing_level]" >&2
+        echo "  processing_level: 'subject' (default) or 'session'" >&2
+        exit 1
+    fi
+
+    # Validate processing level if provided
+    if [ -n "$processing_level" ] && [ "$processing_level" != "subject" ] && [ "$processing_level" != "session" ]; then
+        echo "ERROR: processing_level must be either 'subject' or 'session'" >&2
+        echo "  Provided: '$processing_level'" >&2
+        echo "  Usage: $0 <site_name> <dataset_name> [processing_level]" >&2
+        echo "  Example: $0 Caltech study-ABIDE subject" >&2
+        echo "  Example: $0 Brown study-ADHD200 session" >&2
         exit 1
     fi
 }
