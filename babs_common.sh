@@ -212,13 +212,15 @@ babs_print_completion() {
 }
 
 # Validate arguments
-# Usage: babs_validate_args <site_name> <dataset_name>
+# Usage: babs_validate_args <site_name> <dataset_name> [processing_level]
 babs_validate_args() {
     local site_name="$1"
     local dataset_name="$2"
+    local processing_level="$3"  # Optional, just for signature
 
     if [ -z "$site_name" ] || [ -z "$dataset_name" ]; then
-        echo "Error: Missing arguments. Usage: $0 <site_name> <dataset_name>"
+        echo "Error: Missing arguments. Usage: $0 <site_name> <dataset_name> [processing_level]"
+        echo "  processing_level: 'subject' (default) or 'session'"
         exit 1
     fi
 }

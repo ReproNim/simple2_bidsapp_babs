@@ -1,11 +1,18 @@
 #!/bin/bash
 # MRIQC-NIDM BABS Script
-# Usage: ./mriqc-nidm_babs_script.sh <site_name> <dataset_name>
-# Example: ./mriqc-nidm_babs_script.sh Caltech study-ABIDE
+# Usage: ./mriqc-nidm_babs_script.sh <site_name> <dataset_name> [processing_level]
 #
-# Optional: Set RUN_DATE environment variable to use a specific date instead of auto-generated
-#   export RUN_DATE=1230
-#   ./mriqc-nidm_babs_script.sh Caltech study-ABIDE
+# Arguments:
+#   site_name         - Site identifier (e.g., Caltech, Brown)
+#   dataset_name      - Dataset identifier (e.g., study-ABIDE, study-ADHD200)
+#   processing_level  - Optional: "subject" or "session" (default: subject)
+#
+# Examples:
+#   Single-session dataset:  ./mriqc-nidm_babs_script.sh Caltech study-ABIDE
+#   Multi-session dataset:   ./mriqc-nidm_babs_script.sh Brown study-ADHD200 session
+#
+# Optional environment variable:
+#   RUN_DATE=YYMMDD - Use specific date instead of auto-generated
 
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -31,12 +38,23 @@ SIF_ALT_PATHS=(
 # ============================================================================
 SITE_NAME="$1"
 DATASET_NAME="$2"
+PROCESSING_LEVEL="${3:-subject}"  # Default to "subject" if not provided
 
 # Initialize run date (auto-generate or use env var)
 babs_init_run_date
 
+# Validate processing level
+if [ "$PROCESSING_LEVEL" != "subject" ] && [ "$PROCESSING_LEVEL" != "session" ]; then
+    echo "ERROR: processing_level must be either 'subject' or 'session'" >&2
+    echo "  Provided: '$PROCESSING_LEVEL'" >&2
+    echo "  Usage: $0 <site_name> <dataset_name> [processing_level]" >&2
+    echo "  Example: $0 Caltech study-ABIDE subject" >&2
+    echo "  Example: $0 Brown study-ADHD200 session" >&2
+    exit 1
+fi
+
 # Validate arguments
-babs_validate_args "$SITE_NAME" "$DATASET_NAME"
+babs_validate_args "$SITE_NAME" "$DATASET_NAME" "$PROCESSING_LEVEL"
 
 # ============================================================================
 # Set up logging
@@ -44,6 +62,7 @@ babs_validate_args "$SITE_NAME" "$DATASET_NAME"
 babs_setup_logging "$SCRATCH_DIR" "$APP_NAME"
 echo "Environment: SCRATCH_DIR=$SCRATCH_DIR, BASE_DIR=$BASE_DIR"
 echo "Processing site: $SITE_NAME for dataset: $DATASET_NAME"
+echo "Processing level: $PROCESSING_LEVEL"
 
 # ============================================================================
 # Set up environment
@@ -112,7 +131,7 @@ babs_init_and_submit \
     "$CONTAINER_NAME" \
     "$CONFIG_PATH" \
     "$OUTPUT_DIR" \
-    "subject"
+    "$PROCESSING_LEVEL"
 
 # ============================================================================
 # Print completion message
