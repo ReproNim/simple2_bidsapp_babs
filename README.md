@@ -45,6 +45,7 @@ DATALAD_SET_DIR='/orcd/data/satra/002/datasets/simple2_datalad'
 ```
 
 `DATA_DIR` is not used by the current scripts/configs and is not required in `.env`.
+`SCRATCH_DIR_ANTS`, `SCRATCH_DIR_FS`, and `SCRATCH_DIR_MRIQC` are used by the ANTs, FreeSurfer, and MRIQC wrapper scripts respectively.
 
 ## Usage
 
