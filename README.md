@@ -37,13 +37,14 @@ Create a `.env` file in the project directory:
 
 ```bash
 BASE_DIR='/home/yibei/simple2_bidsapp_babs'
-SCRATCH_DIR_FS='/orcd/scratch/bcs/001/yibei/simple2/fs_bidsapp_babs'
 SCRATCH_DIR_ANTS='/orcd/scratch/bcs/001/yibei/simple2/ants_bidsapp_babs'
+SCRATCH_DIR_FS='/orcd/scratch/bcs/001/yibei/simple2/fs_bidsapp_babs'
 SCRATCH_DIR_MRIQC='/orcd/scratch/bcs/001/yibei/simple2/mriqc_bidsapp_babs'
 SCRATCH_DIR_COMPUTE='/orcd/scratch/bcs/001/yibei/'
-DATA_DIR='/orcd/data/satra/002/datasets/simple2'
 DATALAD_SET_DIR='/orcd/data/satra/002/datasets/simple2_datalad'
 ```
+
+`DATA_DIR` is not used by the current scripts/configs and is not required in `.env`.
 
 ## Usage
 
