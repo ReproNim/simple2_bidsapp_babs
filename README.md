@@ -33,17 +33,30 @@ simple2_bidsapp_babs/
 
 ## Environment Variables (.env)
 
-Create a `.env` file in the project directory:
+Create a `.env` file in the project directory.
+Because this file is sourced by bash, use valid shell assignments (no spaces around `=`):
 
 ```bash
-BASE_DIR='/home/yibei/simple2_bidsapp_babs'
-SCRATCH_DIR_FS='/orcd/scratch/bcs/001/yibei/simple2/fs_bidsapp_babs'
-SCRATCH_DIR_ANTS='/orcd/scratch/bcs/001/yibei/simple2/ants_bidsapp_babs'
-SCRATCH_DIR_MRIQC='/orcd/scratch/bcs/001/yibei/simple2/mriqc_bidsapp_babs'
-SCRATCH_DIR_COMPUTE='/orcd/scratch/bcs/001/yibei/'
-DATA_DIR='/orcd/data/satra/002/datasets/simple2'
-DATALAD_SET_DIR='/orcd/data/satra/002/datasets/simple2_datalad'
+BASE_DIR='/path/of/current/repo'                      # e.g., '/home/yibei/simple2_bidsapp_babs'
+SCRATCH_DIR='/path/to/your/output'                    # e.g., '/orcd/scratch/bcs/001/yibei/simple2'
+SCRATCH_DIR_ANTS="${SCRATCH_DIR}/ants_bidsapp_babs"
+SCRATCH_DIR_FS="${SCRATCH_DIR}/fs_bidsapp_babs"
+SCRATCH_DIR_MRIQC="${SCRATCH_DIR}/mriqc_bidsapp_babs"
+SCRATCH_DIR_COMPUTE='/path/to/your/computespace'      # e.g., '/orcd/scratch/bcs/001/yibei'
+DATALAD_SET_DIR='/path/to/your/input/data'            # e.g., '/orcd/data/satra/002/datasets/simple2_datalad'
 ```
+
+Variable meanings:
+
+- `BASE_DIR`: Repository path used to locate `.sif` container files.
+- `SCRATCH_DIR`: Optional convenience parent directory used to construct the three pipeline-specific scratch paths.
+- `SCRATCH_DIR_ANTS`: Scratch/output root for `ants-nidm_babs_script.sh`.
+- `SCRATCH_DIR_FS`: Scratch/output root for `freesurfer-nidm_babs_script.sh`.
+- `SCRATCH_DIR_MRIQC`: Scratch/output root for `mriqc-nidm_babs_script.sh`.
+- `SCRATCH_DIR_COMPUTE`: Base directory for per-run compute working directories created by each wrapper script.
+- `DATALAD_SET_DIR`: Root datalad dataset directory containing `site-*/sourcedata/raw` and `site-*/derivatives/nidm`.
+
+`RUN_DATE` is optional and does not need to be included in `.env` (it is auto-generated unless explicitly exported).
 
 ## Usage
 
