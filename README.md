@@ -36,16 +36,16 @@ simple2_bidsapp_babs/
 Create a `.env` file in the project directory:
 
 ```bash
-BASE_DIR='/home/yibei/simple2_bidsapp_babs'
-SCRATCH_DIR_ANTS='/orcd/scratch/bcs/001/yibei/simple2/ants_bidsapp_babs'
-SCRATCH_DIR_FS='/orcd/scratch/bcs/001/yibei/simple2/fs_bidsapp_babs'
-SCRATCH_DIR_MRIQC='/orcd/scratch/bcs/001/yibei/simple2/mriqc_bidsapp_babs'
-SCRATCH_DIR_COMPUTE='/orcd/scratch/bcs/001/yibei/'
-DATALAD_SET_DIR='/orcd/data/satra/002/datasets/simple2_datalad'
+BASE_DIR='/path/of/current/repo/' # e.g., '/home/yibei/simple2_bidsapp_babs'
+SCRATCH_DIR = 'path/to/your/output/' # e.g., '/orcd/scratch/bcs/001/yibei/simple2'
+SCRATCH_DIR_ANTS= SCRATCH_DIR + 'ants_bidsapp_babs'
+SCRATCH_DIR_FS= SCRATCH_DIR + 'fs_bidsapp_babs'
+SCRATCH_DIR_MRIQC= SCRATCH_DIR + 'mriqc_bidsapp_babs'
+SCRATCH_DIR_COMPUTE= '/path/to/your/computespace' #e.g., '/orcd/scratch/bcs/001/yibei/'
+DATALAD_SET_DIR= '/path/to/your/input/data/' # e.g.,'/orcd/data/satra/002/datasets/simple2_datalad'
 ```
 
-`DATA_DIR` is not used by the current scripts/configs and is not required in `.env`.
-`SCRATCH_DIR_ANTS`, `SCRATCH_DIR_FS`, and `SCRATCH_DIR_MRIQC` are used by the ANTs, FreeSurfer, and MRIQC wrapper scripts respectively.
+`SCRATCH_DIR_ANTS`, `SCRATCH_DIR_FS`, and `SCRATCH_DIR_MRIQC` are used by the ANTs, FreeSurfer, and MRIQC wrapper scripts respectively. I like to put all of those  three together under `SCRATCH_DIR`, you can reorganize them in whatever way you prefer.
 
 ## Usage
 
