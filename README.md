@@ -1,6 +1,16 @@
 # BABS Scripts for BIDS Apps with NIDM
 
-BABS (BIDS App Bootstrap) scripts for running ANTs-NIDM, FreeSurfer-NIDM, and MRIQC-NIDM on SLURM clusters.
+BABS (BIDS App Bootstrap) wrapper scripts for running the ANTs-NIDM, FreeSurfer-NIDM, and MRIQC-NIDM BIDS Apps on SLURM clusters.
+
+Each `<app>_babs_script.sh` is a one-shot driver that finds the container `.sif`, prepares the BABS YAML from a template, runs `babs init`, and submits jobs. The goal is to get from "I have a BIDS dataset on shared storage" to "jobs are queued on SLURM" in a single command, with all cluster-specific paths factored out into `.env`.
+
+The companion BIDS App container repositories live under [ReproNim](https://github.com/ReproNim):
+
+- [freesurfer-nidm_bidsapp](https://github.com/ReproNim/freesurfer-nidm_bidsapp)
+- [ants-nidm_bidsapp](https://github.com/ReproNim/ants-nidm_bidsapp)
+- [mriqc-nidm_bidsapp](https://github.com/ReproNim/mriqc-nidm_bidsapp)
+
+Build the `.sif` containers from those repos (each has a `Singularity` file and `python setup.py singularity` build helper), then point this repo at them via `BASE_DIR`.
 
 ## Prerequisites
 
@@ -9,7 +19,7 @@ Before running any pipeline:
 1. **BABS environment**: install per the Environment Setup section below.
 2. **Apptainer/Singularity**: available on the cluster (the scripts run `module load apptainer`).
 3. **`.env` file**: copy the template in the Environment Variables section below and edit every path for your cluster — none of these paths are portable.
-4. **Container `.sif` files**: place `freesurfer-nidm_bidsapp.sif`, `ants-nidm_bidsapp.sif`, and/or `mriqc-nidm_bidsapp.sif` in `BASE_DIR` (or one of the per-script `SIF_ALT_PATHS`).
+4. **Container `.sif` files**: build the appropriate container(s) from the ReproNim BIDS App repos linked above and place `freesurfer-nidm_bidsapp.sif`, `ants-nidm_bidsapp.sif`, and/or `mriqc-nidm_bidsapp.sif` in `BASE_DIR` (or one of the per-script `SIF_ALT_PATHS`).
 5. **FreeSurfer license** (FreeSurfer-NIDM only): request a free license at https://surfer.nmr.mgh.harvard.edu/registration.html, save it somewhere readable, and point `FS_LICENSE` in `.env` at the file. The FreeSurfer script fails fast at submission time if `FS_LICENSE` is unset or the file is missing.
 6. **Input datasets**: BIDS data (and optional NIDM derivatives) available as DataLad datasets under `DATALAD_SET_DIR/<dataset_name>/site-<site_name>/...`.
 
@@ -68,7 +78,7 @@ DATALAD_SET_DIR='/path/to/datalad_datasets'               # e.g., '/orcd/data/sa
 FS_LICENSE='/path/to/freesurfer/license.txt'
 ```
 
-`SCRATCH_DIR_ANTS`, `SCRATCH_DIR_FS`, and `SCRATCH_DIR_MRIQC` are used by the ANTs, FreeSurfer, and MRIQC wrapper scripts respectively. I like to put all of those  three together under `SCRATCH_DIR`, you can reorganize them in whatever way you prefer.
+`SCRATCH_DIR_ANTS`, `SCRATCH_DIR_FS`, and `SCRATCH_DIR_MRIQC` are read by the ANTs, FreeSurfer, and MRIQC wrapper scripts respectively. The template above derives them from a shared `SCRATCH_DIR` parent for convenience; you can also set them to unrelated paths if your cluster layout requires it.
 
 ## Usage
 
@@ -105,23 +115,25 @@ export RUN_DATE=1230
 
 ## Output Structure
 
+Each wrapper script writes under the corresponding `SCRATCH_DIR_*` from your `.env`. With the shared-parent layout in the template, that resolves to:
+
 ```
-/orcd/scratch/bcs/001/yibei/simple2/
-├── ants_bidsapp_babs/
-│   └── study-ABIDE_1230/
+${SCRATCH_DIR}/
+├── ants_bidsapp_babs/                              # = ${SCRATCH_DIR_ANTS}
+│   └── <dataset>_<RUN_DATE>/
 │       ├── ants-nidm_bidsapp-container/
 │       ├── config_ants-nidm.yaml
-│       └── ants-nidm_bidsapp_Caltech_1230/    # BABS project directory
-├── fs_bidsapp_babs/
-│   └── study-ABIDE_1230/
+│       └── ants-nidm_bidsapp_<site>_<RUN_DATE>/    # BABS project directory
+├── fs_bidsapp_babs/                                # = ${SCRATCH_DIR_FS}
+│   └── <dataset>_<RUN_DATE>/
 │       ├── freesurfer-nidm_bidsapp-container/
 │       ├── config_freesurfer-nidm.yaml
-│       └── freesurfer-nidm_bidsapp_Caltech_1230/
-└── mriqc_bidsapp_babs/
-    └── study-ABIDE_1230/
+│       └── freesurfer-nidm_bidsapp_<site>_<RUN_DATE>/
+└── mriqc_bidsapp_babs/                             # = ${SCRATCH_DIR_MRIQC}
+    └── <dataset>_<RUN_DATE>/
         ├── mriqc-nidm_bidsapp-container/
         ├── config_mriqc-nidm.yaml
-        └── mriqc-nidm_bidsapp_Caltech_1230/
+        └── mriqc-nidm_bidsapp_<site>_<RUN_DATE>/
 ```
 
 ## Manual BABS Commands
@@ -129,8 +141,8 @@ export RUN_DATE=1230
 After the script creates the BABS project directory:
 
 ```bash
-# Navigate to project directory
-cd /orcd/scratch/bcs/001/yibei/simple2/ants_bidsapp_babs/study-ABIDE_1230/ants-nidm_bidsapp_Caltech_1230
+# Navigate to the BABS project directory
+cd "${SCRATCH_DIR_ANTS}/<dataset>_<RUN_DATE>/ants-nidm_bidsapp_<site>_<RUN_DATE>"
 
 # Activate environment
 micromamba activate babs
@@ -156,7 +168,7 @@ After jobs complete, use the post-processing script:
 ./post_babs.sh <babs_run_dir>
 
 # Example:
-./post_babs.sh /orcd/scratch/bcs/001/yibei/simple2/mriqc_bidsapp_babs/study-ABIDE_1230/mriqc-nidm_bidsapp_Caltech_1230
+./post_babs.sh "${SCRATCH_DIR_MRIQC}/<dataset>_<RUN_DATE>/mriqc-nidm_bidsapp_<site>_<RUN_DATE>"
 ```
 
 This will:
@@ -169,29 +181,22 @@ This will:
 
 Each BIDS App has its own YAML configuration file:
 
-- **config_ants-nidm.yaml** - ANTs normalization settings
-  - 8 CPUs, 32GB memory, 18 hours time limit
+- **config_ants-nidm.yaml** — ANTs normalization settings (8 CPUs, 32 GB, 18 h time limit)
+- **config_freesurfer-nidm.yaml** — FreeSurfer recon-all settings (8 CPUs, 24 GB, 3.5 h time limit; requires `FS_LICENSE`)
+- **config_mriqc-nidm.yaml** — MRIQC quality control settings (12 CPUs, 18 GB, 25 min time limit)
 
-- **config_freesurfer-nidm.yaml** - FreeSurfer recon-all settings
-  - 8 CPUs, 24GB memory, 3.5 hours time limit
-  - Requires FreeSurfer license
+**SLURM partition**: jobs use `mit_preemptable` by default. Override this for your cluster by editing the `customized_text` block in the relevant config YAML before running the wrapper script.
 
-- **config_mriqc-nidm.yaml** - MRIQC quality control settings
-  - 12 CPUs, 18GB memory, 25 minutes time limit
+**Incremental NIDM**: if a DataLad NIDM dataset exists under `${DATALAD_SET_DIR}/<dataset>/site-<site>/derivatives/nidm`, the BIDS App appends to the existing `nidm.ttl` rather than overwriting. Omit (or leave empty) the NIDM input directory to generate NIDM from scratch.
 
-## Important Notes
+## Caveats
 
-1. **Git Safe Directories**: For DataLad datasets owned by different users:
-   ```bash
-   git config --global --add safe.directory '/orcd/data/satra/002/datasets/simple2_datalad/study-ABIDE/Caltech/sourcedata/raw/.git'
-   git config --global --add safe.directory '/orcd/data/satra/002/datasets/simple2_datalad/study-ABIDE/Caltech/derivatives/nidm/.git'
-   ```
+**Git safe directories.** DataLad datasets owned by another user trip git's `safe.directory` check on shared filesystems. If `babs init` or `datalad get` fails with "dubious ownership", whitelist the offending repos once:
 
-2. **FreeSurfer License**: set `FS_LICENSE` in `.env` to the path of your license file. The FreeSurfer-NIDM script validates this at startup and aborts before submitting jobs if the path is unset or missing.
-
-3. **NIDM Incremental Building**: If an NIDM directory exists at the target location, NIDM results will be built incrementally.
-
-4. **SLURM Partition**: Jobs use `mit_preemptable` partition by default (configurable in YAML files).
+```bash
+git config --global --add safe.directory "${DATALAD_SET_DIR}/<dataset>/site-<site>/sourcedata/raw/.git"
+git config --global --add safe.directory "${DATALAD_SET_DIR}/<dataset>/site-<site>/derivatives/nidm/.git"
+```
 
 ## Adding a New BIDS App
 
