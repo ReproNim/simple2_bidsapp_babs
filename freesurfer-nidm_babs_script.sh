@@ -38,15 +38,10 @@ SIF_ALT_PATHS=(
 # ============================================================================
 # Parse arguments
 # ============================================================================
-SITE_NAME="$1"
-DATASET_NAME="$2"
-PROCESSING_LEVEL="${3:-subject}"  # Default to "subject" if not provided
+babs_parse_args "$@"
 
 # Initialize run date (auto-generate or use env var)
 babs_init_run_date
-
-# Validate arguments (includes processing level validation)
-babs_validate_args "$SITE_NAME" "$DATASET_NAME" "$PROCESSING_LEVEL"
 
 # ============================================================================
 # Set up logging
