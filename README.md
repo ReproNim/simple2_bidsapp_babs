@@ -47,26 +47,28 @@ simple2_bidsapp_babs/
 Create a `.env` file in the project directory. **All paths shown below are examples from MIT ORCD — edit every line for your cluster.**
 
 ```bash
-# Where this repo lives (used as a fallback location for .sif files)
-BASE_DIR='/path/to/simple2_bidsapp_babs'
+# Where this repo lives (fallback location for .sif files)
+BASE_DIR='/path/to/simple2_bidsapp_babs'                  # e.g., '/home/yibei/simple2_bidsapp_babs'
+
+# Shared parent for per-app scratch directories
+SCRATCH_DIR='/path/to/scratch'                            # e.g., '/orcd/scratch/bcs/001/yibei/simple2'
 
 # Per-app scratch directories where BABS projects are created
-SCRATCH_DIR_FS='/path/to/scratch/fs_bidsapp_babs'
-SCRATCH_DIR_ANTS='/path/to/scratch/ants_bidsapp_babs'
-SCRATCH_DIR_MRIQC='/path/to/scratch/mriqc_bidsapp_babs'
+SCRATCH_DIR_ANTS="${SCRATCH_DIR}/ants_bidsapp_babs"
+SCRATCH_DIR_FS="${SCRATCH_DIR}/fs_bidsapp_babs"
+SCRATCH_DIR_MRIQC="${SCRATCH_DIR}/mriqc_bidsapp_babs"
 
 # Compute space for SLURM job working directories
-SCRATCH_DIR_COMPUTE='/path/to/scratch/'
-
-# Root of input data
-DATA_DIR='/path/to/datasets'
+SCRATCH_DIR_COMPUTE='/path/to/compute_space'              # e.g., '/orcd/scratch/bcs/001/yibei/'
 
 # Root of DataLad-versioned input datasets (BIDS + NIDM)
-DATALAD_SET_DIR='/path/to/datalad_datasets'
+DATALAD_SET_DIR='/path/to/datalad_datasets'               # e.g., '/orcd/data/satra/002/datasets/simple2_datalad'
 
 # FreeSurfer license file (FreeSurfer-NIDM pipeline only)
 FS_LICENSE='/path/to/freesurfer/license.txt'
 ```
+
+`SCRATCH_DIR_ANTS`, `SCRATCH_DIR_FS`, and `SCRATCH_DIR_MRIQC` are used by the ANTs, FreeSurfer, and MRIQC wrapper scripts respectively. I like to put all of those  three together under `SCRATCH_DIR`, you can reorganize them in whatever way you prefer.
 
 ## Usage
 
