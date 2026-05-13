@@ -16,7 +16,7 @@ input_datasets:
 # Arguments passed to the application inside the container
 bids_app_args:
     "$SUBJECT_SELECTION_FLAG": "--participant_label"
-    --fs-license-file: "/orcd/scratch/bcs/001/yibei/prettymouth_babs/license.txt"
+    --fs-license-file: "${FS_LICENSE}"
     --skip-bids-validation: ""
     # Note: NIDM will be generated automatically if NIDM/ directory exists
 singularity_args:

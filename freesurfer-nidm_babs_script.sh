@@ -48,6 +48,16 @@ babs_init_run_date
 # Validate arguments (includes processing level validation)
 babs_validate_args "$SITE_NAME" "$DATASET_NAME" "$PROCESSING_LEVEL"
 
+# Validate FreeSurfer license (fail fast before submitting jobs)
+if [ -z "${FS_LICENSE:-}" ]; then
+    echo "ERROR: FS_LICENSE is not set. Add 'FS_LICENSE=/path/to/license.txt' to .env" >&2
+    exit 1
+fi
+if [ ! -f "$FS_LICENSE" ]; then
+    echo "ERROR: FreeSurfer license file not found at FS_LICENSE=$FS_LICENSE" >&2
+    exit 1
+fi
+
 # ============================================================================
 # Set up logging
 # ============================================================================
@@ -97,7 +107,8 @@ babs_prepare_yaml_config \
     "BIDS_ORIGIN=${BIDS_ORIGIN}" \
     "NIDM_ORIGIN=${NIDM_ORIGIN}" \
     "COMPUTE_SPACE=${COMPUTE_DIR}" \
-    "RUN_DATE=${RUN_DATE}"
+    "RUN_DATE=${RUN_DATE}" \
+    "FS_LICENSE=${FS_LICENSE}"
 
 echo "BIDS origin URL: $BIDS_ORIGIN"
 echo "NIDM origin URL: $NIDM_ORIGIN"

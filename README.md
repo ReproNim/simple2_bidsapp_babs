@@ -2,6 +2,17 @@
 
 BABS (BIDS App Bootstrap) scripts for running ANTs-NIDM, FreeSurfer-NIDM, and MRIQC-NIDM on SLURM clusters.
 
+## Prerequisites
+
+Before running any pipeline:
+
+1. **BABS environment**: install per the Environment Setup section below.
+2. **Apptainer/Singularity**: available on the cluster (the scripts run `module load apptainer`).
+3. **`.env` file**: copy the template in the Environment Variables section below and edit every path for your cluster — none of these paths are portable.
+4. **Container `.sif` files**: place `freesurfer-nidm_bidsapp.sif`, `ants-nidm_bidsapp.sif`, and/or `mriqc-nidm_bidsapp.sif` in `BASE_DIR` (or one of the per-script `SIF_ALT_PATHS`).
+5. **FreeSurfer license** (FreeSurfer-NIDM only): request a free license at https://surfer.nmr.mgh.harvard.edu/registration.html, save it somewhere readable, and point `FS_LICENSE` in `.env` at the file. The FreeSurfer script fails fast at submission time if `FS_LICENSE` is unset or the file is missing.
+6. **Input datasets**: BIDS data (and optional NIDM derivatives) available as DataLad datasets under `DATALAD_SET_DIR/<dataset_name>/site-<site_name>/...`.
+
 ## Environment Setup
 
 ```bash
@@ -33,16 +44,28 @@ simple2_bidsapp_babs/
 
 ## Environment Variables (.env)
 
-Create a `.env` file in the project directory:
+Create a `.env` file in the project directory. **All paths shown below are examples from MIT ORCD — edit every line for your cluster.**
 
 ```bash
-BASE_DIR='/home/yibei/simple2_bidsapp_babs'
-SCRATCH_DIR_FS='/orcd/scratch/bcs/001/yibei/simple2/fs_bidsapp_babs'
-SCRATCH_DIR_ANTS='/orcd/scratch/bcs/001/yibei/simple2/ants_bidsapp_babs'
-SCRATCH_DIR_MRIQC='/orcd/scratch/bcs/001/yibei/simple2/mriqc_bidsapp_babs'
-SCRATCH_DIR_COMPUTE='/orcd/scratch/bcs/001/yibei/'
-DATA_DIR='/orcd/data/satra/002/datasets/simple2'
-DATALAD_SET_DIR='/orcd/data/satra/002/datasets/simple2_datalad'
+# Where this repo lives (used as a fallback location for .sif files)
+BASE_DIR='/path/to/simple2_bidsapp_babs'
+
+# Per-app scratch directories where BABS projects are created
+SCRATCH_DIR_FS='/path/to/scratch/fs_bidsapp_babs'
+SCRATCH_DIR_ANTS='/path/to/scratch/ants_bidsapp_babs'
+SCRATCH_DIR_MRIQC='/path/to/scratch/mriqc_bidsapp_babs'
+
+# Compute space for SLURM job working directories
+SCRATCH_DIR_COMPUTE='/path/to/scratch/'
+
+# Root of input data
+DATA_DIR='/path/to/datasets'
+
+# Root of DataLad-versioned input datasets (BIDS + NIDM)
+DATALAD_SET_DIR='/path/to/datalad_datasets'
+
+# FreeSurfer license file (FreeSurfer-NIDM pipeline only)
+FS_LICENSE='/path/to/freesurfer/license.txt'
 ```
 
 ## Usage
@@ -162,7 +185,7 @@ Each BIDS App has its own YAML configuration file:
    git config --global --add safe.directory '/orcd/data/satra/002/datasets/simple2_datalad/study-ABIDE/Caltech/derivatives/nidm/.git'
    ```
 
-2. **FreeSurfer License**: Located at `/orcd/scratch/bcs/001/yibei/prettymouth_babs/license.txt`
+2. **FreeSurfer License**: set `FS_LICENSE` in `.env` to the path of your license file. The FreeSurfer-NIDM script validates this at startup and aborts before submitting jobs if the path is unset or missing.
 
 3. **NIDM Incremental Building**: If an NIDM directory exists at the target location, NIDM results will be built incrementally.
 
