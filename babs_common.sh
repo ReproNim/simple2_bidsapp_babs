@@ -211,6 +211,15 @@ babs_print_completion() {
     echo "Log file: $LOG_FILE" | tee -a "$LOG_FILE"
 }
 
+# Print usage and examples to stderr. Call after an "ERROR: ..." line in any
+# arg-handling failure path so users see a consistent message.
+babs_print_usage() {
+    echo "  Usage: $0 <site_name> <dataset_name> [processing_level]" >&2
+    echo "    processing_level: 'subject' (default) or 'session'" >&2
+    echo "  Example: $0 Caltech study-ABIDE subject" >&2
+    echo "  Example: $0 Brown study-ADHD200 session" >&2
+}
+
 # Validate arguments
 # Usage: babs_validate_args <site_name> <dataset_name> <processing_level>
 # processing_level must be "subject" or "session" (no empty allowed; callers
@@ -221,17 +230,14 @@ babs_validate_args() {
     local processing_level="$3"
 
     if [ -z "$site_name" ] || [ -z "$dataset_name" ]; then
-        echo "ERROR: Missing arguments. Usage: $0 <site_name> <dataset_name> [processing_level]" >&2
-        echo "  processing_level: 'subject' (default) or 'session'" >&2
+        echo "ERROR: Missing arguments." >&2
+        babs_print_usage
         exit 1
     fi
 
     if [ "$processing_level" != "subject" ] && [ "$processing_level" != "session" ]; then
-        echo "ERROR: processing_level must be either 'subject' or 'session'" >&2
-        echo "  Provided: '$processing_level'" >&2
-        echo "  Usage: $0 <site_name> <dataset_name> [processing_level]" >&2
-        echo "  Example: $0 Caltech study-ABIDE subject" >&2
-        echo "  Example: $0 Brown study-ADHD200 session" >&2
+        echo "ERROR: processing_level must be either 'subject' or 'session' (provided: '$processing_level')" >&2
+        babs_print_usage
         exit 1
     fi
 }
@@ -241,7 +247,8 @@ babs_validate_args() {
 # Usage: babs_parse_args "$@"
 babs_parse_args() {
     if [ "$#" -gt 3 ]; then
-        echo "ERROR: Too many arguments ($#). Usage: $0 <site_name> <dataset_name> [processing_level]" >&2
+        echo "ERROR: Too many arguments ($#)." >&2
+        babs_print_usage
         exit 1
     fi
 
