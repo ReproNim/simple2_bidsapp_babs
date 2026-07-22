@@ -216,17 +216,37 @@ babs_init_and_submit() {
 
     cd "${output_dir}" || exit 1
 
-    # Optional: First check the setup before submitting
-    echo "Checking BABS setup..."
-    babs check-setup "${PWD}" --job_test
+    # Check the setup before submitting.
+    #
+    # NOTE: `babs check-setup` currently crashes on the PR #369 BIDS-study layout
+    # (analysis_path=".", inputs under sourcedata/). check_setup.py hardcodes a
+    # pre-check on `<analysis_path>/inputs/data` that does not exist in that
+    # layout, raising FileNotFoundError before it reaches the real per-input-
+    # dataset validation. That pre-check is redundant with the per-dataset loop
+    # that follows it, so bypassing check-setup here does not lose validation of
+    # the input datasets themselves. Set BABS_SKIP_CHECK_SETUP=1 to skip it for
+    # study-layout projects until babs fixes check_setup.py upstream.
+    local check_setup_ok=0
+    if [ "${BABS_SKIP_CHECK_SETUP:-0}" = "1" ]; then
+        echo "BABS_SKIP_CHECK_SETUP=1: skipping 'babs check-setup'"
+        echo "  (works around babs check_setup.py hardcoded 'inputs/data' check"
+        echo "   that is incompatible with the PR #369 BIDS-study layout)."
+        check_setup_ok=1
+    else
+        echo "Checking BABS setup..."
+        if babs check-setup "${PWD}" --job_test; then
+            check_setup_ok=1
+        fi
+    fi
 
-    # If babs check-setup is successful, submit all jobs
-    if [ $? -eq 0 ]; then
-        echo "BABS setup check successful, submitting all jobs..."
+    if [ "$check_setup_ok" -eq 1 ]; then
+        echo "Submitting all jobs..."
         babs submit
     else
         echo "BABS setup check failed. Please review the errors above."
-        echo "You can manually submit after fixing issues with: babs submit --all"
+        echo "If this is the known study-layout check_setup bug (FileNotFoundError"
+        echo "on '<project>/inputs/data'), re-run with BABS_SKIP_CHECK_SETUP=1."
+        echo "Or submit manually after review with: babs submit"
         exit 1
     fi
 }
