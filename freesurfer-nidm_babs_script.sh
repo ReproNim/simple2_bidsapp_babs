@@ -43,6 +43,16 @@ babs_parse_args "$@"
 # Initialize run date (auto-generate or use env var)
 babs_init_run_date
 
+# Validate FreeSurfer license (fail fast before submitting jobs)
+if [ -z "${FS_LICENSE:-}" ]; then
+    echo "ERROR: FS_LICENSE is not set. Add 'FS_LICENSE=/path/to/license.txt' to .env" >&2
+    exit 1
+fi
+if [ ! -f "$FS_LICENSE" ]; then
+    echo "ERROR: FreeSurfer license file not found at FS_LICENSE=$FS_LICENSE" >&2
+    exit 1
+fi
+
 # ============================================================================
 # Set up logging
 # ============================================================================
@@ -92,7 +102,8 @@ babs_prepare_yaml_config \
     "BIDS_ORIGIN=${BIDS_ORIGIN}" \
     "NIDM_ORIGIN=${NIDM_ORIGIN}" \
     "COMPUTE_SPACE=${COMPUTE_DIR}" \
-    "RUN_DATE=${RUN_DATE}"
+    "RUN_DATE=${RUN_DATE}" \
+    "FS_LICENSE=${FS_LICENSE}"
 
 babs_configure_session_selection "$CONFIG_PATH" "$PROCESSING_LEVEL" || exit 1
 

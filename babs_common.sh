@@ -137,10 +137,13 @@ babs_prepare_yaml_config() {
         local var="${subst%%=*}"
         local value="${subst#*=}"
 
-        # Escape special characters in the replacement value for sed
-        # Replace \ with \\, & with \&, and / with \/
+        # Escape only the characters that are special in a sed *replacement*:
+        # backslash, ampersand, and the '/' delimiter. Regex metacharacters such
+        # as '.' must NOT be escaped here (this is replacement text, not a
+        # pattern) or they leak literal backslashes into the config, e.g.
+        # "license.txt" -> "license\.txt". Escape backslash first.
         local escaped_value
-        escaped_value=$(printf '%s\n' "$value" | sed 's/[[\.*^$()+?{|]/\\&/g; s/&/\\&/g; s/\\/\\\\/g; s/\//\\\//g')
+        escaped_value=$(printf '%s' "$value" | sed -e 's/\\/\\\\/g' -e 's/&/\\&/g' -e 's/\//\\\//g')
 
         # Replace both ${VAR} and $VAR forms
         sed -i "s/\${${var}}/${escaped_value}/g" "$output_path"
