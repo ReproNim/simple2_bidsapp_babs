@@ -152,6 +152,32 @@ babs_prepare_yaml_config() {
     echo "YAML config file created at $output_path"
 }
 
+# Add BABS's session placeholder only for session-wise projects. BABS defines
+# $sesid in session job scripts, but not in subject job scripts.
+# Usage: babs_configure_session_selection <config_path> <processing_level>
+babs_configure_session_selection() {
+    local config_path="$1"
+    local processing_level="$2"
+
+    if [ ! -f "$config_path" ]; then
+        echo "ERROR: Config file not found: $config_path" >&2
+        return 1
+    fi
+
+    # Make repeated wrapper runs deterministic if a generated config is reused.
+    sed -i '/^[[:space:]]*\$SESSION_SELECTION_FLAG:/d' "$config_path"
+
+    if [ "$processing_level" = "session" ]; then
+        if ! grep -q '^[[:space:]]*\$SUBJECT_SELECTION_FLAG:' "$config_path"; then
+            echo "ERROR: \$SUBJECT_SELECTION_FLAG not found in $config_path" >&2
+            return 1
+        fi
+        sed -i \
+            '/^[[:space:]]*\$SUBJECT_SELECTION_FLAG:/a\    $SESSION_SELECTION_FLAG: "--session-label"' \
+            "$config_path"
+    fi
+}
+
 # Check NIDM directory for incremental building
 # Usage: babs_check_nidm <dataset_name> <site_name>
 babs_check_nidm() {

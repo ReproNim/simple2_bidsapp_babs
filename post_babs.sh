@@ -63,8 +63,18 @@ echo "  DATASET: $DATASET"
 echo "  SITE: $SITE"
 echo "  TARGET_DIR: $TARGET_DIR"
 
-# RIA store lives under .../output_ria#~data
-RIA_URL="ria+file://${BABS_RUN_DIR}/output_ria#~data"
+# PR #369 projects keep internal RIA stores under .babs/. Retain support for
+# projects created with BABS's legacy top-level output_ria default.
+if [ -d "${BABS_RUN_DIR}/.babs/output_ria" ]; then
+  OUTPUT_RIA_DIR="${BABS_RUN_DIR}/.babs/output_ria"
+elif [ -d "${BABS_RUN_DIR}/output_ria" ]; then
+  OUTPUT_RIA_DIR="${BABS_RUN_DIR}/output_ria"
+else
+  echo "ERROR: No output RIA found under $BABS_RUN_DIR" >&2
+  echo "Checked .babs/output_ria and output_ria" >&2
+  exit 1
+fi
+RIA_URL="ria+file://${OUTPUT_RIA_DIR}#~data"
 
 # sanity checks
 command -v datalad >/dev/null || { echo "ERROR: datalad not found"; exit 1; }
