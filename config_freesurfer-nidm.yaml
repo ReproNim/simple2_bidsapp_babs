@@ -28,17 +28,29 @@ singularity_args:
     - --userns
     - --no-home
     - --writable-tmpfs
-# Output foldername(s) to be zipped:
+# Output foldername(s) to be zipped. The app writes <output>/sub-<id>/... with
+# no app-name wrapper (per-subject layout, ae9518a). ${subid} is NOT substituted
+# by babs_prepare_yaml_config (only vars passed to it are); it survives into the
+# rendered participant_job.sh where bash defines ${subid} at runtime, so each
+# job zips its own subject folder: sub-<id>_sub-<id>-0-1-0.zip.
 zip_foldernames:
-    freesurfer-nidm_bidsapp: "0-1-0"
+    ${subid}: "0-1-0"
 # How much cluster resources it needs:
 cluster_resources:
     interpreting_shell: "/bin/bash"
+    # Do NOT use mit_preemptable: a preempted BABS job is guaranteed to fail on
+    # requeue, because participant_job.sh does a bare `mkdir "${BRANCH}"` (no -p)
+    # and the branch dir already exists from the killed attempt. sub-0051457 hit
+    # this on the aug20 run.
+    # mem: both aug20 subjects peaked at MaxRSS ~23.99 GB against a 24G request,
+    # i.e. right at the ceiling — 32G gives real headroom.
+    # time: 03:30:00 was not enough; sub-0051457 hit the wall on a ~2x-slow node.
+    # The aug20 run completed at 06:00:00 (fastest subject used 47 min).
     customized_text: |
-        #SBATCH --partition=mit_preemptable
+        #SBATCH --partition=mit_normal
         #SBATCH --cpus-per-task=8
-        #SBATCH --mem=24G
-        #SBATCH --time=03:30:00
+        #SBATCH --mem=32G
+        #SBATCH --time=06:00:00
         #SBATCH --job-name=fs-nidm_bidsapp_${RUN_DATE}
 # Necessary commands to be run first:
 script_preamble: |
