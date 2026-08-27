@@ -49,15 +49,22 @@ cluster_resources:
     # job 21392449, 2026-08-27, 12 cpus, this container:
     #     sub-0051456  Elapsed 00:04:19  MaxRSS 10.36 GB
     #     sub-0051457  Elapsed 00:04:53  MaxRSS 10.23 GB
-    # Sized at roughly 1.5x observed peak memory and 6x observed wall clock, the
+    # Sized at roughly 2x observed peak memory and 6x observed wall clock, the
     # headroom covering slower nodes and longer BOLD runs at other sites. The
     # first run of this app used 24G/02:00:00, which these numbers show was a
     # ~2.3x / ~25x over-request.
-    # Do NOT use mit_preemptable (see above).
+    #
+    # The SBATCH allocation must stay STRICTLY ABOVE mriqc's own `--mem: "16G"`
+    # above. That value is the budget nipype schedules against, so if mriqc ever
+    # spends what it has been told it may use, an allocation equal to it is an
+    # OOM kill at exactly that number -- with nothing left over for the
+    # interpreter and I/O on top. Observed peak is 10.36 GB, so this is headroom
+    # rather than a live problem, but the margin should not be zero for a number
+    # the app itself treats as available.
     customized_text: |
         #SBATCH --partition=mit_normal
         #SBATCH --cpus-per-task=12
-        #SBATCH --mem=16G
+        #SBATCH --mem=20G
         #SBATCH --time=00:30:00
         #SBATCH --job-name=mriqc-nidm_bidsapp_${RUN_DATE}
 # Necessary commands to be run first. This runs on the COMPUTE side

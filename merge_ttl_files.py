@@ -43,8 +43,12 @@ def remove_duplication(g):
 
 
 # Subtrees that contain nidm.ttl files which are NOT this run's results.
-# Critical when harvesting in place inside a BABS project (study layout), where
-# the project root holds both the unzipped results AND:
+#
+# Run this manually against a BABS project that has already been harvested by
+# the dataset's own post_babs.sh (site-<SITE>/code/post_babs.sh) -- that script
+# unzips in place and deliberately does not merge TTLs. The exclusions below are
+# what make merging safe on such a project, because the project root holds both
+# the unzipped results AND:
 #   sourcedata/NIDM/sub-*/nidm.ttl  -- the INPUT NIDM the app appended to
 #   merge_ds/                       -- babs merge's clone of the same results
 #   .babs/, containers/, code/      -- machinery, and the RIA object store

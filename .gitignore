@@ -3,6 +3,9 @@ logs/
 .DS_Store
 .env
 *.sif
+# Archived container images kept alongside the live ones. Without this rule a
+# bare `git add -A` tries to hash ~21 GB of them and stalls.
+*.sif.archived
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
