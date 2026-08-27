@@ -22,23 +22,41 @@ input_datasets:
 bids_app_args:
     $SUBJECT_SELECTION_FLAG: "--participant-label"
     --num-threads: "8"
+    # The BABS-mounted BIDS input is a datalad sparse checkout of a single
+    # subject, which pybids' validator rejects; the app finds its own T1w.
+    --skip-bids-validation: ""
+    # NIDM is picked up automatically from <bids_dir>/../NIDM, i.e. the mounted
+    # sourcedata/NIDM input dataset. No flag needed.
 singularity_args:
     - --userns
     - --no-home
     - --writable-tmpfs
-# Output foldername(s) to be zipped:
+# Output foldername(s) to be zipped. The app writes <output>/sub-<id>/... with
+# no app-name wrapper (per-subject layout, sensein/ants_bidsapp#9). ${subid} is
+# NOT substituted by babs_prepare_yaml_config (only vars passed to it are); it
+# survives into the rendered participant_job.sh where bash defines ${subid} at
+# runtime, so each job zips its own subject folder:
+# sub-<id>_sub-<id>-0-1-0.zip.
 zip_foldernames:
-    ants-nidm_bidsapp: "0-1-0"
+    ${subid}: "0-1-0"
 # How much cluster resources it needs:
 cluster_resources:
     interpreting_shell: "/bin/bash"
+    # Do NOT use mit_preemptable: a preempted BABS job is guaranteed to fail on
+    # requeue, because participant_job.sh does a bare `mkdir "${BRANCH}"` (no -p)
+    # and the branch dir already exists from the killed attempt.
+    # mem/time are unverified for ANTs (no completed run's MaxRSS data yet);
+    # joint label fusion against 20 atlases is the memory-hungry step.
     customized_text: |
-        #SBATCH --partition=mit_preemptable
+        #SBATCH --partition=mit_normal
         #SBATCH --cpus-per-task=8
         #SBATCH --mem=32G
         #SBATCH --time=18:00:00
         #SBATCH --job-name=ants-nidm_bidsapp_${RUN_DATE}
-# Necessary commands to be run first:
+# Necessary commands to be run first. This runs on the COMPUTE side
+# (participant_job.sh), which only needs datalad/git-annex/apptainer -- not the
+# babs CLI itself, so the plain `babs` env is fine here. The login-side env used
+# for `babs init`/`babs submit` is set by babs_common.sh (BABS_ENV=babs-369).
 script_preamble: |
     source ~/.bashrc
     micromamba activate babs
@@ -54,3 +72,6 @@ alert_log_messages:
         - "ERROR:"
         - "Cannot allocate memory"
         - "Numerical result out of range"
+        - "Segmentation failed"
+        - "Error in NIDM conversion"
+        - "Required file not found"
