@@ -192,6 +192,36 @@ reason not to reimplement it:
   content, so an incremental run still extracts newly finished subjects without
   re-fetching tens of GB only to skip it.
 
+### NIDM TTL merging
+
+Also the dataset's job, as part of that per-site script. This repo deliberately
+carries no merge script: it used to, and two divergent copies of a TTL merger is
+how a study ends up with a silently wrong `nidm_merge.ttl`.
+
+Two constraints any implementation has to meet, both measured against a real
+harvested project (`derivatives/babs-freesurfer-nidm_aug26`, 36 subjects):
+
+1. **Match the per-subject layout.** The apps write `sub-<id>[/ses-<x>]/nidm.ttl`
+   directly. A glob expecting an intermediate directory, e.g.
+   `sub-*/nidm_output/nidm.ttl` as in `utils/scripts/merge_ttl_files.py`, finds
+   **0** files on a current project and writes a near-empty merge without
+   erroring.
+2. **Exclude the non-result subtrees.** A bare recursive search for `nidm.ttl`
+   finds **74** files where only **36** are results: after an in-place harvest
+   the project root also holds `sourcedata/NIDM/sub-*/nidm.ttl` (the *input*
+   NIDM the app appended to) and, if a merge was interrupted, `merge_ds/` (a
+   clone of the same results). Merging either silently doubles the input graphs.
+   Skip `sourcedata`, `merge_ds`, `.babs`, `.git`, `.datalad`, `containers`,
+   `code`, `inputs`.
+
+A working implementation satisfying both, plus the duplicate-association pruning
+from the dataset's version, is retrievable from this repo's history:
+
+```bash
+git show 342b960:merge_ttl_files.py
+```
+
+
 
 ## Configuration Files
 
