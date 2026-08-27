@@ -239,12 +239,27 @@ babs_init_and_submit() {
 
     echo "Initializing BABS with the dataset-specific output directory..."
 
+    # Optional pilot / re-run subset: set BABS_LIST_SUB_FILE to a CSV with a
+    # 'sub_id' column (plus 'ses_id' for session-level projects) to restrict the
+    # project to those subjects. Unset means "every subject in the input".
+    local list_sub_args=()
+    if [ -n "${BABS_LIST_SUB_FILE:-}" ]; then
+        if [ ! -f "$BABS_LIST_SUB_FILE" ]; then
+            echo "ERROR: BABS_LIST_SUB_FILE not found: $BABS_LIST_SUB_FILE" >&2
+            exit 1
+        fi
+        echo "Restricting project to subjects listed in $BABS_LIST_SUB_FILE:"
+        cat "$BABS_LIST_SUB_FILE"
+        list_sub_args=( --list_sub_file "$BABS_LIST_SUB_FILE" )
+    fi
+
     babs init \
         --container_ds "${container_ds_path}" \
         --container_name "${container_name}" \
         --container_config "${config_path}" \
         --processing_level "${processing_level}" \
         --queue slurm \
+        ${list_sub_args[@]+"${list_sub_args[@]}"} \
         "${output_dir}"
 
     cd "${output_dir}" || exit 1
