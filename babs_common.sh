@@ -287,9 +287,28 @@ babs_init_and_submit() {
         fi
     fi
 
+    # Optional controlled ramp: set BABS_SUBMIT_COUNT=N to submit only the first
+    # N jobs. Use it when an app's memory/wall-clock needs are still unverified --
+    # measure MaxRSS/Elapsed from the first completions, size cluster_resources
+    # from real data, then `babs submit` the rest into the same project. Unset
+    # means "submit every remaining job".
+    local submit_args=()
+    if [ -n "${BABS_SUBMIT_COUNT:-}" ]; then
+        if ! [[ "$BABS_SUBMIT_COUNT" =~ ^[1-9][0-9]*$ ]]; then
+            echo "ERROR: BABS_SUBMIT_COUNT must be a positive integer (got '$BABS_SUBMIT_COUNT')" >&2
+            exit 1
+        fi
+        submit_args=( --count "$BABS_SUBMIT_COUNT" )
+    fi
+
     if [ "$check_setup_ok" -eq 1 ]; then
-        echo "Submitting all jobs..."
-        babs submit
+        if [ -n "${BABS_SUBMIT_COUNT:-}" ]; then
+            echo "Submitting first ${BABS_SUBMIT_COUNT} job(s) (BABS_SUBMIT_COUNT set)..."
+            echo "  Submit the rest later with: babs submit \"${output_dir}\""
+        else
+            echo "Submitting all jobs..."
+        fi
+        babs submit ${submit_args[@]+"${submit_args[@]}"}
     else
         echo "BABS setup check failed. Please review the errors above."
         echo "If this is the known study-layout check_setup bug (FileNotFoundError"
