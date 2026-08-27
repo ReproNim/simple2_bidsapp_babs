@@ -42,26 +42,45 @@ def remove_duplication(g):
     return g
 
 
+# Subtrees that contain nidm.ttl files which are NOT this run's results.
+# Critical when harvesting in place inside a BABS project (study layout), where
+# the project root holds both the unzipped results AND:
+#   sourcedata/NIDM/sub-*/nidm.ttl  -- the INPUT NIDM the app appended to
+#   merge_ds/                       -- babs merge's clone of the same results
+#   .babs/, containers/, code/      -- machinery, and the RIA object store
+# Merging the inputs back in would silently double every input graph.
+EXCLUDED_DIRS = {
+    "sourcedata",
+    "merge_ds",
+    ".babs",
+    ".git",
+    ".datalad",
+    "containers",
+    "code",
+    "inputs",
+}
+
+
 def find_nidm_ttl_files(directory):
     """
-    Find all NIDM TTL files in the directory structure.
-    Searches for patterns like:
-    - */nidm.ttl
-    - */nidm_output/nidm.ttl
-    - nidm/*/nidm.ttl
-    - nidm/sub-*.ttl (FreeSurfer BIDS app output)
+    Find this run's NIDM TTL files under `directory`.
+
+    Matches:
+    - sub-<id>[/ses-<x>]/nidm.ttl   (per-subject layout -- current)
     - any other nidm.ttl in subdirectories
+    - nidm/sub-*.ttl                (legacy FreeSurfer BIDS app output)
+
+    Skips EXCLUDED_DIRS so input NIDM and merge_ds copies are never merged.
     """
     directory = Path(directory).resolve()
-    nidm_files = []
 
-    # Search for all nidm.ttl files recursively
-    for ttl_file in directory.rglob("nidm.ttl"):
-        nidm_files.append(ttl_file)
+    def is_result(path):
+        rel = path.relative_to(directory)
+        return not any(part in EXCLUDED_DIRS for part in rel.parts)
 
-    # Also search for FreeSurfer pattern: nidm/sub-*.ttl
-    for ttl_file in directory.rglob("nidm/sub-*.ttl"):
-        nidm_files.append(ttl_file)
+    nidm_files = [f for f in directory.rglob("nidm.ttl") if is_result(f)]
+    # Legacy FreeSurfer pattern: nidm/sub-*.ttl
+    nidm_files += [f for f in directory.rglob("nidm/sub-*.ttl") if is_result(f)]
 
     # Deduplicate and sort
     return sorted(set(nidm_files))

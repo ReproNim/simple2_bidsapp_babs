@@ -1,127 +1,130 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Usage: ./post_babs.sh <babs_run_dir>
+# Harvest a finished BABS run IN PLACE, inside the study tree.
+#
+# Usage: ./post_babs.sh <babs_project_dir>
 # Example:
 #   ./post_babs.sh \
-#     /orcd/scratch/bcs/001/yibei/simple2/mriqc_bidsapp_babs/study_abide_1223/mriqc_bidsapp_Caltech_1223
-#   Output will be automatically created at:
-#     /orcd/scratch/bcs/002/sensein/simple2/mriqc_bidsapp/study_abide/Caltech
+#     /orcd/data/satra/002/datasets/simple2_datalad/study-ABIDE/site-Caltech/derivatives/babs-mriqc-nidm_aug27
+#
+# Under the BIDS-study layout the BABS project already lives beside the other
+# derivatives, and every app now writes <output>/sub-<id>/... so each zip's top
+# level IS the subject directory. Unzipping in place therefore produces exactly
+# the delivered derivative:
+#
+#   derivatives/babs-<app>_<date>/
+#   |-- dataset_description.json
+#   |-- sub-<id>/{nidm.ttl, <app results>}
+#   `-- nidm_merge.ttl
+#
+# There is no separate clone-and-copy step: the old version of this script
+# cloned the output RIA into /orcd/scratch/bcs/002/sensein/simple2/<app>/... and
+# derived that path by parsing a scratch-style project path. That parsing cannot
+# match a study-tree path at all (it looks for a `<name>_babs` path component),
+# so the script could not run on these projects.
 
-# Capture script directory early, before any cd commands
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# `babs merge` must run under a BABS revision containing PennLINC/babs#369;
+# v0.5.2 (the plain `babs` env) does not understand this project layout.
+BABS_ENV="${BABS_ENV:-babs-369}"
 eval "$(micromamba shell hook --shell bash)"
-micromamba activate babs
+micromamba activate "$BABS_ENV"
+echo "Using BABS: $(babs --version 2>&1 | tail -1) (env: ${BABS_ENV})"
 
 if [ "$#" -ne 1 ]; then
-  echo "Usage: $0 <babs_run_dir>" >&2
+  echo "Usage: $0 <babs_project_dir>" >&2
   exit 1
 fi
 
-BABS_RUN_DIR="${1%/}"        # e.g., .../mriqc_bidsapp_babs/study_abide_1223/mriqc_bidsapp_Caltech_1223
+PROJECT_DIR="${1%/}"
 
-# Parse the input path to extract bidsapp, dataset, and site
-# Pattern: .../simple2/<bidsapp>_babs/<dataset>_MMDD/<bidsapp>_<site>_MMDD
-
-# Extract components from path
-IFS='/' read -ra PATH_PARTS <<< "$BABS_RUN_DIR"
-
-# Find bidsapp (folder ending in _babs)
-for part in "${PATH_PARTS[@]}"; do
-  if [[ "$part" =~ ^(.+)_babs$ ]]; then
-    BIDSAPP="${BASH_REMATCH[1]}"
-    break
-  fi
-done
-
-# Find dataset (folder matching study_*_[0-9]+)
-for part in "${PATH_PARTS[@]}"; do
-  if [[ "$part" =~ ^(study_[^_]+)_[0-9]+$ ]]; then
-    DATASET="${BASH_REMATCH[1]}"
-    break
-  fi
-done
-
-# Extract site from the last component
-# Pattern: <bidsapp>_<site>_MMDD -> extract <site>
-LAST_COMPONENT="${PATH_PARTS[-1]}"
-if [[ "$LAST_COMPONENT" =~ ^${BIDSAPP}_(.+)_[0-9]+$ ]]; then
-  SITE="${BASH_REMATCH[1]}"
-else
-  echo "ERROR: Could not extract site from: $LAST_COMPONENT" >&2
+if [ ! -d "$PROJECT_DIR" ]; then
+  echo "ERROR: not a directory: $PROJECT_DIR" >&2
+  exit 1
+fi
+if [ ! -d "${PROJECT_DIR}/.babs" ]; then
+  echo "ERROR: no .babs/ under $PROJECT_DIR — not a study-layout BABS project." >&2
+  echo "  (Legacy projects kept the RIA stores at the top level; this script" >&2
+  echo "   only supports the PR#369 study layout.)" >&2
+  exit 1
+fi
+if [ ! -d "${PROJECT_DIR}/.babs/output_ria" ]; then
+  echo "ERROR: no output RIA at ${PROJECT_DIR}/.babs/output_ria" >&2
   exit 1
 fi
 
-# Construct output path
-OUTPUT_BASE="/orcd/scratch/bcs/002/sensein/simple2"
-TARGET_DIR="${OUTPUT_BASE}/${BIDSAPP}/${DATASET}/${SITE}"
-
-echo "Parsed components:"
-echo "  BIDSAPP: $BIDSAPP"
-echo "  DATASET: $DATASET"
-echo "  SITE: $SITE"
-echo "  TARGET_DIR: $TARGET_DIR"
-
-# PR #369 projects keep internal RIA stores under .babs/. Retain support for
-# projects created with BABS's legacy top-level output_ria default.
-if [ -d "${BABS_RUN_DIR}/.babs/output_ria" ]; then
-  OUTPUT_RIA_DIR="${BABS_RUN_DIR}/.babs/output_ria"
-elif [ -d "${BABS_RUN_DIR}/output_ria" ]; then
-  OUTPUT_RIA_DIR="${BABS_RUN_DIR}/output_ria"
-else
-  echo "ERROR: No output RIA found under $BABS_RUN_DIR" >&2
-  echo "Checked .babs/output_ria and output_ria" >&2
-  exit 1
-fi
-RIA_URL="ria+file://${OUTPUT_RIA_DIR}#~data"
+# Report what we are harvesting, from the study-tree path.
+SITE="$(basename "$(dirname "$(dirname "$PROJECT_DIR")")")"   # site-<SITE>
+DATASET="$(basename "$(dirname "$(dirname "$(dirname "$PROJECT_DIR")")")")"  # study-<NAME>
+echo "Harvesting in place:"
+echo "  PROJECT: $(basename "$PROJECT_DIR")"
+echo "  DATASET: ${DATASET}"
+echo "  SITE:    ${SITE}"
+echo "  TARGET:  ${PROJECT_DIR}  (in place)"
 
 # sanity checks
 command -v datalad >/dev/null || { echo "ERROR: datalad not found"; exit 1; }
 command -v unzip   >/dev/null || { echo "ERROR: unzip not found"; exit 1; }
 
-# Run babs merge (continue if no jobs to merge)
-if ! babs merge ${BABS_RUN_DIR} 2>&1; then
+# Pre-flight: `babs merge` finishes by fast-forwarding the project's master from
+# the output RIA. If the project's local master has commits the output RIA does
+# not (the classic cause: editing code/participant_job.sh after `babs init`),
+# that ff-only update fails partway through -- after the job branches have
+# already been merged and deleted, which is not safely re-runnable. Catch it
+# before starting rather than halfway through.
+cd "$PROJECT_DIR"
+if git rev-parse --verify --quiet output/master >/dev/null 2>&1; then
+  if [ -n "$(git rev-list output/master..master 2>/dev/null)" ]; then
+    echo "ERROR: local master has commits not in output/master:" >&2
+    git --no-pager log --oneline output/master..master >&2
+    echo "  'babs merge' ends in an ff-only update of master and will fail." >&2
+    echo "  Fix first (disjoint files make this conflict-free):" >&2
+    echo "    git -C \"$PROJECT_DIR\" rebase output/master master" >&2
+    echo "  Then re-run this script." >&2
+    exit 1
+  fi
+fi
+
+# Merge the per-job result branches (continue if there is nothing new to merge)
+if ! babs merge "$PROJECT_DIR" 2>&1; then
   echo "Note: babs merge had no new jobs to merge (already merged or none finished)"
 fi
 echo "after babs merge"
-mkdir -p "$(dirname "$TARGET_DIR")"
 
-# Clone if needed, or update if already exists
-if [ ! -d "$TARGET_DIR/.git" ] && [ ! -d "$TARGET_DIR/.datalad" ]; then
-  echo "Cloning from: $RIA_URL"
-  datalad clone "$RIA_URL" "$TARGET_DIR"
-else
-  echo "Dataset already exists at $TARGET_DIR — updating..."
-  cd "$TARGET_DIR"
-  datalad update --merge
-fi
+cd "$PROJECT_DIR"
 
-cd "$TARGET_DIR"
-
-# Get top-level sub* (dirs/files) if they exist; skip otherwise
+# Pull down the result zips' contents. The zips sit at the project root as
+# sub-<id>_<foldername>-<version>.zip git-annex keys.
 shopt -s nullglob
-subs=(sub-*)
-if ((${#subs[@]})); then
-  echo "datalad get on ${#subs[@]} sub* item(s)…"
-  datalad get "${subs[@]}"
+zips=(sub-*.zip)
+if ((${#zips[@]})); then
+  echo "datalad get on ${#zips[@]} zip(s)…"
+  datalad get "${zips[@]}"
 else
-  echo "No top-level sub* entries found — skipping datalad get sub-*"
+  echo "No sub-*.zip found at the project root — nothing to harvest."
+  echo "  (Have the jobs finished? Check: babs status \"$PROJECT_DIR\")"
+  shopt -u nullglob
+  exit 0
 fi
-shopt -u nullglob
-echo "after datalad get"
 
-for z in sub-*.zip; do
-  [ -e "$z" ] || continue
+for z in "${zips[@]}"; do
   echo "unzipping $z"
+  # -n: never clobber. Each zip's top level is its own sub-<id>/, so distinct
+  # subjects cannot collide and nothing is silently dropped.
   unzip -n "$z"
 done
+shopt -u nullglob
+echo "after unzip"
 
-# Merge NIDM TTL files (script searches recursively for all patterns)
+# Merge the per-subject NIDM graphs into one study-level file. The merge script
+# skips sourcedata/ and merge_ds/, so the INPUT NIDM this run appended to is not
+# folded back in.
 MERGE_SCRIPT="${SCRIPT_DIR}/merge_ttl_files.py"
 if [ -f "$MERGE_SCRIPT" ]; then
   echo "Running TTL merge..."
-  python "$MERGE_SCRIPT" "${TARGET_DIR}"
+  python "$MERGE_SCRIPT" "$PROJECT_DIR"
 else
   echo "WARNING: merge_ttl_files.py not found at $MERGE_SCRIPT"
 fi
