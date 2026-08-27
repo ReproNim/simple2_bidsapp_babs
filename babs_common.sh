@@ -22,6 +22,10 @@ babs_setup_logging() {
     local scratch_dir="$1"
     local app_name="$2"
 
+    # First-ever run of an app has no scratch dir yet, and this runs before
+    # RUN_DIR is created -- without this, tee fails and the run has no log.
+    mkdir -p "$scratch_dir"
+
     LOG_FILE="${scratch_dir}/babs_script_${RUN_DATE}_$(date +%Y%m%d_%H%M%S).log"
     echo "=== Script started at $(date) ===" | tee "$LOG_FILE"
     exec > >(tee -a "$LOG_FILE") 2>&1
