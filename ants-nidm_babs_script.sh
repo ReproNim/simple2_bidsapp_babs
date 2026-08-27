@@ -80,7 +80,7 @@ babs_setup_container \
 # ============================================================================
 # Define paths for YAML substitution
 BIDS_ORIGIN="${DATALAD_SET_DIR}/${DATASET_NAME}/site-${SITE_NAME}/sourcedata/raw"
-NIDM_ORIGIN="${DATALAD_SET_DIR}/${DATASET_NAME}/site-${SITE_NAME}/derivatives/nidm"
+NIDM_ORIGIN="$(babs_nidm_origin "$DATASET_NAME" "$SITE_NAME")"
 
 # Verify BIDS dataset exists
 if [ ! -d "$BIDS_ORIGIN" ]; then
@@ -111,7 +111,7 @@ babs_check_nidm "$DATASET_NAME" "$SITE_NAME"
 # ============================================================================
 # Initialize BABS and submit
 # ============================================================================
-OUTPUT_DIR="${RUN_DIR}/ants-nidm_bidsapp_${SITE_NAME}_${RUN_DATE}"
+OUTPUT_DIR="$(babs_study_output_dir "$DATASET_NAME" "$SITE_NAME" "ants-nidm")"
 
 babs_init_and_submit \
     "${PWD}/${CONTAINER_DS_NAME}" \

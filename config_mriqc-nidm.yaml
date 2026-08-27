@@ -34,11 +34,26 @@ zip_foldernames:
 # How much cluster resources it needs:
 cluster_resources:
     interpreting_shell: "/bin/bash"
+    # Do NOT use mit_preemptable: a preempted BABS job is guaranteed to fail on
+    # requeue, because participant_job.sh does a bare `mkdir "${BRANCH}"` (no -p)
+    # and the branch dir already exists from the killed attempt. The sibling
+    # freesurfer app hit exactly this on its aug20 run.
+    #
+    # mem/time below are FIRST-RUN ESTIMATES, not measured: no completed run of
+    # this app exists yet. They deliberately over-request, because on mit_normal
+    # an over-request costs queue priority while an under-request costs the whole
+    # job. Tighten them from `sacct -j <id> --format=Elapsed,MaxRSS` after this
+    # run rather than guessing again.
+    #   - mem 24G vs the 16G handed to MRIQC's own scheduler (--mem below):
+    #     MRIQC's --mem is a nipype planning hint, not a ceiling, and ANTs peaks
+    #     above it.
+    #   - time 02:00:00 covers anat+func (each Caltech subject is 1 T1w + 1 rest
+    #     bold); the previous 00:25:00 had no measurement behind it either.
     customized_text: |
-        #SBATCH --partition=mit_preemptable
+        #SBATCH --partition=mit_normal
         #SBATCH --cpus-per-task=12
-        #SBATCH --mem=18G
-        #SBATCH --time=00:25:00
+        #SBATCH --mem=24G
+        #SBATCH --time=02:00:00
         #SBATCH --job-name=mriqc-nidm_bidsapp_${RUN_DATE}
 # Necessary commands to be run first:
 script_preamble: |
@@ -56,3 +71,6 @@ alert_log_messages:
         - "ERROR:"
         - "Cannot allocate memory"
         - "Numerical result out of range"
+        - "MRIQC execution failed"
+        - "All subjects failed to process"
+        - "csv2nidm tool not found"

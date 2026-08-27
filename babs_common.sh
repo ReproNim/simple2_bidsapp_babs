@@ -27,12 +27,25 @@ babs_setup_logging() {
     exec > >(tee -a "$LOG_FILE") 2>&1
 }
 
+# Environment used on the LOGIN side (i.e. for `babs init`/`babs submit`).
+# Must be a BABS revision containing PennLINC/babs#369: the configs here use the
+# BIDS-study layout (analysis_path ".", inputs under sourcedata/), and v0.5.2 --
+# what the plain `babs` env holds -- silently produces the OLD project structure
+# instead of erroring. Override with BABS_ENV if you install it elsewhere.
+BABS_ENV="${BABS_ENV:-babs-369}"
+
+# NIDM derivative to use as the augmentation source. `derivatives/nidm` does not
+# exist in the satra study tree; the real shared resource is versioned.
+# Override with BABS_NIDM_DERIV to point at a different NIDM release.
+BABS_NIDM_DERIV="${BABS_NIDM_DERIV:-nidm_4.5.0}"
+
 # Set up environment - source bashrc, activate babs, load apptainer
 babs_setup_env() {
     echo "Setting up environment..."
     source ~/.bashrc
-    micromamba activate babs
+    micromamba activate "$BABS_ENV"
     module load apptainer 2>/dev/null || true
+    echo "Using BABS: $(babs --version 2>&1 | tail -1) (env: ${BABS_ENV})"
 }
 
 # Generic container setup
@@ -181,17 +194,37 @@ babs_configure_session_selection() {
     fi
 }
 
+# Resolve the NIDM input dataset for a dataset/site.
+# Usage: babs_nidm_origin <dataset_name> <site_name>
+babs_nidm_origin() {
+    echo "${DATALAD_SET_DIR}/${1}/site-${2}/derivatives/${BABS_NIDM_DERIV}"
+}
+
+# Resolve the BABS project directory inside the study tree.
+# The project must live beside the other derivatives (that is where the study
+# layout expects results to land), NOT in scratch: scratch is only the compute
+# space, and a project created there is invisible to anything reading the study.
+# Usage: babs_study_output_dir <dataset_name> <site_name> <app_name>
+babs_study_output_dir() {
+    echo "${DATALAD_SET_DIR}/${1}/site-${2}/derivatives/babs-${3}_${RUN_DATE}"
+}
+
 # Check NIDM directory for incremental building
 # Usage: babs_check_nidm <dataset_name> <site_name>
 babs_check_nidm() {
     local dataset_name="$1"
     local site_name="$2"
-    local nidm_dir="${DATALAD_SET_DIR}/${dataset_name}/site-${site_name}/derivatives/nidm"
+    local nidm_dir
+    nidm_dir="$(babs_nidm_origin "$dataset_name" "$site_name")"
 
-    if [ -d "$nidm_dir" ] && [ -f "$nidm_dir/nidm.ttl" ]; then
-        echo "Found NIDM directory at $nidm_dir - NIDM will be built incrementally"
+    # Per-subject layout: <nidm_deriv>/sub-<id>/nidm.ttl (there is no nidm.ttl at
+    # the derivative root, so checking for one there always reported "not found").
+    if [ -d "$nidm_dir" ] && compgen -G "${nidm_dir}/sub-*/nidm.ttl" >/dev/null; then
+        local n
+        n=$(compgen -G "${nidm_dir}/sub-*/nidm.ttl" | wc -l)
+        echo "Found NIDM at $nidm_dir (${n} subject file(s)) - NIDM will be built incrementally"
     else
-        echo "No NIDM directory found - NIDM will be created from scratch"
+        echo "No NIDM found at $nidm_dir - NIDM will be created from scratch"
     fi
 }
 
