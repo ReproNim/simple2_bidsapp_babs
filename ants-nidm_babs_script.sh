@@ -31,6 +31,8 @@ SIF_FILENAME="ants-nidm_bidsapp.sif"
 SIF_ALT_PATHS=(
     "/orcd/home/002/yibei/simple2_bidsapp_babs"
     "/home/yibei/simple2_bidsapp_babs"
+    "/orcd/home/002/yibei/ants_bidsapp"
+    "/home/yibei/ants_bidsapp"
 )
 
 # ============================================================================
