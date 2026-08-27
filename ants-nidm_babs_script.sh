@@ -98,6 +98,8 @@ babs_prepare_yaml_config \
     "COMPUTE_SPACE=${COMPUTE_DIR}" \
     "RUN_DATE=${RUN_DATE}"
 
+babs_configure_session_selection "$CONFIG_PATH" "$PROCESSING_LEVEL" || exit 1
+
 echo "BIDS origin URL: $BIDS_ORIGIN"
 echo "NIDM origin URL: $NIDM_ORIGIN"
 

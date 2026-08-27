@@ -125,6 +125,27 @@ babs status
 babs merge
 ```
 
+## BABS project layout
+
+The supplied configs use the configurable BIDS-study layout introduced by
+[PennLINC/babs PR #369](https://github.com/PennLINC/babs/pull/369):
+
+```yaml
+analysis_path: "."
+input_ria_path: ".babs/input_ria"
+output_ria_path: ".babs/output_ria"
+```
+
+The project directory is therefore the analysis DataLad dataset, input
+datasets are installed beneath `sourcedata/`, and internal RIA stores live
+beneath `.babs/`. Use a BABS revision containing PR #369 with these configs.
+To create a project with BABS's legacy layout instead, remove the three path
+settings; `post_babs.sh` supports both output RIA locations.
+
+For session-level runs, the wrappers add
+`$SESSION_SELECTION_FLAG: "--session-label"` to the generated config. They omit
+it for subject-level runs because BABS only defines `$sesid` in session jobs.
+
 ## Post-Processing
 
 After jobs complete, use the post-processing script:

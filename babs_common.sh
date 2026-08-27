@@ -137,10 +137,13 @@ babs_prepare_yaml_config() {
         local var="${subst%%=*}"
         local value="${subst#*=}"
 
-        # Escape special characters in the replacement value for sed
-        # Replace \ with \\, & with \&, and / with \/
+        # Escape only the characters that are special in a sed *replacement*:
+        # backslash, ampersand, and the '/' delimiter. Regex metacharacters such
+        # as '.' must NOT be escaped here (this is replacement text, not a
+        # pattern) or they leak literal backslashes into the config, e.g.
+        # "license.txt" -> "license\.txt". Escape backslash first.
         local escaped_value
-        escaped_value=$(printf '%s\n' "$value" | sed 's/[[\.*^$()+?{|]/\\&/g; s/&/\\&/g; s/\\/\\\\/g; s/\//\\\//g')
+        escaped_value=$(printf '%s' "$value" | sed -e 's/\\/\\\\/g' -e 's/&/\\&/g' -e 's/\//\\\//g')
 
         # Replace both ${VAR} and $VAR forms
         sed -i "s/\${${var}}/${escaped_value}/g" "$output_path"
@@ -150,6 +153,32 @@ babs_prepare_yaml_config() {
     done
 
     echo "YAML config file created at $output_path"
+}
+
+# Add BABS's session placeholder only for session-wise projects. BABS defines
+# $sesid in session job scripts, but not in subject job scripts.
+# Usage: babs_configure_session_selection <config_path> <processing_level>
+babs_configure_session_selection() {
+    local config_path="$1"
+    local processing_level="$2"
+
+    if [ ! -f "$config_path" ]; then
+        echo "ERROR: Config file not found: $config_path" >&2
+        return 1
+    fi
+
+    # Make repeated wrapper runs deterministic if a generated config is reused.
+    sed -i '/^[[:space:]]*\$SESSION_SELECTION_FLAG:/d' "$config_path"
+
+    if [ "$processing_level" = "session" ]; then
+        if ! grep -q '^[[:space:]]*\$SUBJECT_SELECTION_FLAG:' "$config_path"; then
+            echo "ERROR: \$SUBJECT_SELECTION_FLAG not found in $config_path" >&2
+            return 1
+        fi
+        sed -i \
+            '/^[[:space:]]*\$SUBJECT_SELECTION_FLAG:/a\    $SESSION_SELECTION_FLAG: "--session-label"' \
+            "$config_path"
+    fi
 }
 
 # Check NIDM directory for incremental building
@@ -187,17 +216,37 @@ babs_init_and_submit() {
 
     cd "${output_dir}" || exit 1
 
-    # Optional: First check the setup before submitting
-    echo "Checking BABS setup..."
-    babs check-setup "${PWD}" --job_test
+    # Check the setup before submitting.
+    #
+    # NOTE: `babs check-setup` currently crashes on the PR #369 BIDS-study layout
+    # (analysis_path=".", inputs under sourcedata/). check_setup.py hardcodes a
+    # pre-check on `<analysis_path>/inputs/data` that does not exist in that
+    # layout, raising FileNotFoundError before it reaches the real per-input-
+    # dataset validation. That pre-check is redundant with the per-dataset loop
+    # that follows it, so bypassing check-setup here does not lose validation of
+    # the input datasets themselves. Set BABS_SKIP_CHECK_SETUP=1 to skip it for
+    # study-layout projects until babs fixes check_setup.py upstream.
+    local check_setup_ok=0
+    if [ "${BABS_SKIP_CHECK_SETUP:-0}" = "1" ]; then
+        echo "BABS_SKIP_CHECK_SETUP=1: skipping 'babs check-setup'"
+        echo "  (works around babs check_setup.py hardcoded 'inputs/data' check"
+        echo "   that is incompatible with the PR #369 BIDS-study layout)."
+        check_setup_ok=1
+    else
+        echo "Checking BABS setup..."
+        if babs check-setup "${PWD}" --job_test; then
+            check_setup_ok=1
+        fi
+    fi
 
-    # If babs check-setup is successful, submit all jobs
-    if [ $? -eq 0 ]; then
-        echo "BABS setup check successful, submitting all jobs..."
+    if [ "$check_setup_ok" -eq 1 ]; then
+        echo "Submitting all jobs..."
         babs submit
     else
         echo "BABS setup check failed. Please review the errors above."
-        echo "You can manually submit after fixing issues with: babs submit --all"
+        echo "If this is the known study-layout check_setup bug (FileNotFoundError"
+        echo "on '<project>/inputs/data'), re-run with BABS_SKIP_CHECK_SETUP=1."
+        echo "Or submit manually after review with: babs submit"
         exit 1
     fi
 }
