@@ -42,22 +42,35 @@ zip_foldernames:
 # How much cluster resources it needs:
 cluster_resources:
     interpreting_shell: "/bin/bash"
-    # Do NOT use mit_preemptable: a preempted BABS job is guaranteed to fail on
-    # requeue, because participant_job.sh does a bare `mkdir "${BRANCH}"` (no -p)
-    # and the branch dir already exists from the killed attempt.
+    # mit_preemptable: 591 nodes and a 2-day ceiling, versus mit_normal's 50
+    # nodes and 12h. The throughput difference is the reason to be here.
     #
-    # time: mit_normal's hard limit is 12:00:00 (`sinfo -p mit_normal`). The
-    # earlier 18:00:00 was not merely optimistic, it was unsubmittable -- sbatch
-    # rejects the array outright with "Requested time limit is invalid".
+    # --no-requeue is MANDATORY on this partition, not optional tuning.
+    # mit_preemptable has PreemptMode=REQUEUE and GraceTime=0. A requeued job
+    # keeps its SLURM job id, so participant_job.sh recomputes the SAME
+    # BRANCH="job-${SLURM_ARRAY_JOB_ID}-${SLURM_ARRAY_TASK_ID}-${subid}" and then
+    # hits its bare `mkdir "${BRANCH}"` (line 47, no -p) against the directory
+    # the killed attempt left behind -- a guaranteed failure. The script does
+    # register `trap cleanup EXIT` to remove that directory, but an untrapped
+    # SIGTERM/SIGKILL bypasses an EXIT trap, and GraceTime=0 leaves no window
+    # anyway. The freesurfer aug20 run lost sub-0051457 exactly this way.
+    #
+    # With --no-requeue, SLURM cancels instead of requeueing (PreemptMode=REQUEUE
+    # requeues only jobs that permit it). Preemption then becomes a clean job
+    # failure, and `babs submit` retries it under a NEW array job id -- hence a
+    # new BRANCH and no collision. Expect some jobs to need resubmission; that is
+    # the trade for the extra nodes.
     #
     # cpus/mem: PILOT VALUES, to be re-sized from measured MaxRSS/Elapsed once a
-    # subject completes (no ANTs run has finished through BABS yet). 16 threads
-    # rather than 8 because the 12h ceiling has to cover joint label fusion's 20
-    # atlas registrations; 48G rather than 32G because ITK allocates per-thread
-    # buffers and 32G was sized for 8 threads. mit_normal nodes carry 64+ cpus
-    # and 360G, so neither is a scheduling obstacle.
+    # subject completes (no correct ANTs run has finished through BABS yet). 16
+    # threads because joint label fusion registers 20 atlases; 48G because ITK
+    # allocates per-thread buffers and the earlier 32G was sized for 8 threads.
+    # time: 12:00:00 retained -- the partition now allows up to 2 days, but the
+    # one completed (if wrongly-masked) run took 1h23m, so 12h is already ample
+    # and a shorter request schedules sooner.
     customized_text: |
-        #SBATCH --partition=mit_normal
+        #SBATCH --partition=mit_preemptable
+        #SBATCH --no-requeue
         #SBATCH --cpus-per-task=16
         #SBATCH --mem=48G
         #SBATCH --time=12:00:00

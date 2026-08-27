@@ -43,6 +43,40 @@ BABS_ENV="${BABS_ENV:-babs-369}"
 # Override with BABS_NIDM_DERIV to point at a different NIDM release.
 BABS_NIDM_DERIV="${BABS_NIDM_DERIV:-nidm_4.5.0}"
 
+# Fail fast if the active babs cannot honour the BIDS-study layout keys the
+# configs set. This is worth a hard check rather than a README line, because the
+# failure is silent: babs 0.5.2's base.py hardcodes
+#     self.analysis_path  = op.join(self.project_root, 'analysis')
+#     self.input_ria_path = op.join(self.project_root, 'input_ria')
+# and never reads them from the config, and nothing rejects the now-unknown keys.
+# `babs init` then succeeds and quietly builds a LEGACY-layout project. Worse,
+# the mistake stays hidden downstream, because a legacy project does have a
+# top-level output_ria for a harvest script to find.
+#
+# Limitation: this compares the release triple only, so a hypothetical
+# 0.5.5.devN predating PennLINC/babs#369 would pass. It catches the case that
+# actually occurs -- an env still on 0.5.2.
+babs_require_pr369() {
+    local raw ver min="0.5.5"
+    raw="$(babs --version 2>&1 | tail -1)"
+    ver="$(printf '%s' "$raw" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+
+    if [ -z "$ver" ]; then
+        echo "WARNING: could not parse a version from 'babs --version' (${raw})." >&2
+        echo "  Skipping the PR#369 check -- verify the layout by hand." >&2
+        return 0
+    fi
+
+    if [ "$(printf '%s\n%s\n' "$min" "$ver" | sort -V | head -1)" != "$min" ]; then
+        echo "ERROR: babs ${ver} (env: ${BABS_ENV}) predates PennLINC/babs#369." >&2
+        echo "  The configs here set analysis_path / input_ria_path /" >&2
+        echo "  output_ria_path. This babs ignores them SILENTLY and would build a" >&2
+        echo "  legacy-layout project instead -- no error, wrong result." >&2
+        echo "  Install a babs >= ${min} and point BABS_ENV at it." >&2
+        exit 1
+    fi
+}
+
 # Set up environment - source bashrc, activate babs, load apptainer
 babs_setup_env() {
     echo "Setting up environment..."
@@ -50,6 +84,7 @@ babs_setup_env() {
     micromamba activate "$BABS_ENV"
     module load apptainer 2>/dev/null || true
     echo "Using BABS: $(babs --version 2>&1 | tail -1) (env: ${BABS_ENV})"
+    babs_require_pr369
 }
 
 # Generic container setup
@@ -275,9 +310,20 @@ babs_init_and_submit() {
     # pre-check on `<analysis_path>/inputs/data` that does not exist in that
     # layout, raising FileNotFoundError before it reaches the real per-input-
     # dataset validation. That pre-check is redundant with the per-dataset loop
-    # that follows it, so bypassing check-setup here does not lose validation of
-    # the input datasets themselves. Set BABS_SKIP_CHECK_SETUP=1 to skip it for
-    # study-layout projects until babs fixes check_setup.py upstream.
+    # that follows it, so bypassing check-setup does not lose validation of the
+    # input datasets themselves.
+    #
+    # It DOES cost something, though, and not just dataset checks: `--job_test`
+    # is documented in babs as "Whether to submit and run a test job", so
+    # skipping it skips a real sbatch submission with this config's
+    # cluster_resources. That is not hypothetical -- the ants config once asked
+    # for --time=18:00:00 against mit_normal's 12h cap, which sbatch rejects
+    # outright, and with this flag set the project built completely and then
+    # submitted nothing. A test job would have surfaced it at setup time.
+    #
+    # So: use it to work around the upstream crash, not as a default. Set
+    # BABS_SKIP_CHECK_SETUP=1 for study-layout projects until babs fixes
+    # check_setup.py upstream.
     local check_setup_ok=0
     if [ "${BABS_SKIP_CHECK_SETUP:-0}" = "1" ]; then
         echo "BABS_SKIP_CHECK_SETUP=1: skipping 'babs check-setup'"

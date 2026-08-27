@@ -219,7 +219,13 @@ Each BIDS App has its own YAML configuration file:
 
 3. **NIDM Incremental Building**: If an NIDM directory exists at the target location, NIDM results will be built incrementally.
 
-4. **SLURM Partition**: Jobs use `mit_preemptable` partition by default (configurable in YAML files).
+4. **SLURM Partition**: Jobs use `mit_preemptable` by default (591 nodes, 2-day
+   ceiling) rather than `mit_normal` (50 nodes, 12h). Every config that uses it
+   must also pass `#SBATCH --no-requeue`: the partition has
+   `PreemptMode=REQUEUE`, a requeued job keeps its SLURM id, and
+   `participant_job.sh` then recomputes the same `BRANCH` and fails on its bare
+   `mkdir "${BRANCH}"`. `--no-requeue` turns preemption into a clean failure that
+   `babs submit` can retry under a new job id. Expect occasional resubmissions.
 
 ## Adding a New BIDS App
 
