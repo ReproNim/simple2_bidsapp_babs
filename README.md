@@ -27,7 +27,6 @@ simple2_bidsapp_babs/
 ├── config_ants-nidm.yaml         # ANTs-NIDM BIDS App configuration
 ├── config_freesurfer-nidm.yaml   # FreeSurfer-NIDM BIDS App configuration
 ├── config_mriqc-nidm.yaml        # MRIQC-NIDM BIDS App configuration
-├── post_babs.sh                  # Post-processing script
 └── .env                          # Environment variables
 ```
 
@@ -139,8 +138,12 @@ output_ria_path: ".babs/output_ria"
 The project directory is therefore the analysis DataLad dataset, input
 datasets are installed beneath `sourcedata/`, and internal RIA stores live
 beneath `.babs/`. Use a BABS revision containing PR #369 with these configs.
-To create a project with BABS's legacy layout instead, remove the three path
-settings; `post_babs.sh` supports both output RIA locations.
+These configs therefore require a BABS revision containing PR #369; the
+wrappers activate one (`BABS_ENV`, default `babs-369`). On BABS 0.5.2 the three
+settings are silently ignored -- `base.py` hardcodes `analysis_path` and
+`input_ria_path`, and nothing rejects the unknown keys -- so you get a
+legacy-layout project with no error. The dataset's `post_babs.sh` only supports
+this study layout.
 
 For session-level runs, the wrappers add
 `$SESSION_SELECTION_FLAG: "--session-label"` to the generated config. They omit
@@ -148,20 +151,77 @@ it for subject-level runs because BABS only defines `$sesid` in session jobs.
 
 ## Post-Processing
 
-After jobs complete, use the post-processing script:
+**Do not add a post-processing script here.** The canonical one is maintained
+in the dataset itself, per site:
 
-```bash
-./post_babs.sh <babs_run_dir>
-
-# Example:
-./post_babs.sh /orcd/scratch/bcs/001/yibei/simple2/mriqc_bidsapp_babs/study-ABIDE_1230/mriqc-nidm_bidsapp_Caltech_1230
+```
+<DATALAD_SET_DIR>/<study>/site-<SITE>/code/post_babs.sh
 ```
 
-This will:
-1. Run `babs merge` to combine results
-2. Clone output RIA store
-3. Extract zipped subject files
-4. Merge NIDM TTL files
+Run it against a finished BABS project directory:
+
+```bash
+module load git-annex          # required: see below
+micromamba activate babs-369
+/orcd/data/satra/002/datasets/simple2_datalad/study-ABIDE/site-Caltech/code/post_babs.sh \
+    /orcd/data/satra/002/datasets/simple2_datalad/study-ABIDE/site-Caltech/derivatives/babs-<app>_<date>
+```
+
+It merges the per-job result branches, syncs the checked-out branch with the
+output RIA, fetches and unzips the result zips in place, drops the now-redundant
+zip content, and commits the site dataset's submodule pointer.
+
+That script handles a set of failure modes worth knowing about, and is the
+reason not to reimplement it:
+
+- `git-annex` must be on PATH. These datasets set `filter.annex.process`, so any
+  `git checkout`/`rebase` shells out to `git-annex filter-process`; without it,
+  git empties or deletes tracked files partway through.
+- git's "dubious ownership" guard trips routinely, because these datasets are
+  run by whoever is doing the analysis rather than only by the owner. It is
+  checked up front, since the failure is otherwise misdiagnosed as a detached
+  HEAD.
+- `babs merge` is **not** idempotent: it deletes the `job-*` branches from the
+  output RIA once merged, so a second run reports "no successfully finished
+  job" for a project where everything in fact finished. It counts the RIA's
+  remaining `job-*` branches instead of inferring.
+- Local and output-RIA histories diverge normally (saving `code/` after jobs
+  were submitted), so `ff-only` legitimately fails; it replays local commits
+  when their net effect is confined to `code/`, leaving a timestamped backup ref.
+- Re-runs detect already-extracted subjects by directory rather than by annex
+  content, so an incremental run still extracts newly finished subjects without
+  re-fetching tens of GB only to skip it.
+
+### NIDM TTL merging
+
+Also the dataset's job, as part of that per-site script. This repo deliberately
+carries no merge script: it used to, and two divergent copies of a TTL merger is
+how a study ends up with a silently wrong `nidm_merge.ttl`.
+
+Two constraints any implementation has to meet, both measured against a real
+harvested project (`derivatives/babs-freesurfer-nidm_aug26`, 36 subjects):
+
+1. **Match the per-subject layout.** The apps write `sub-<id>[/ses-<x>]/nidm.ttl`
+   directly. A glob expecting an intermediate directory, e.g.
+   `sub-*/nidm_output/nidm.ttl` as in `utils/scripts/merge_ttl_files.py`, finds
+   **0** files on a current project and writes a near-empty merge without
+   erroring.
+2. **Exclude the non-result subtrees.** A bare recursive search for `nidm.ttl`
+   finds **74** files where only **36** are results: after an in-place harvest
+   the project root also holds `sourcedata/NIDM/sub-*/nidm.ttl` (the *input*
+   NIDM the app appended to) and, if a merge was interrupted, `merge_ds/` (a
+   clone of the same results). Merging either silently doubles the input graphs.
+   Skip `sourcedata`, `merge_ds`, `.babs`, `.git`, `.datalad`, `containers`,
+   `code`, `inputs`.
+
+A working implementation satisfying both, plus the duplicate-association pruning
+from the dataset's version, is retrievable from this repo's history:
+
+```bash
+git show 342b960:merge_ttl_files.py
+```
+
+
 
 ## Configuration Files
 
@@ -189,7 +249,13 @@ Each BIDS App has its own YAML configuration file:
 
 3. **NIDM Incremental Building**: If an NIDM directory exists at the target location, NIDM results will be built incrementally.
 
-4. **SLURM Partition**: Jobs use `mit_preemptable` partition by default (configurable in YAML files).
+4. **SLURM Partition**: Jobs use `mit_preemptable` by default (591 nodes, 2-day
+   ceiling) rather than `mit_normal` (50 nodes, 12h). Every config that uses it
+   must also pass `#SBATCH --no-requeue`: the partition has
+   `PreemptMode=REQUEUE`, a requeued job keeps its SLURM id, and
+   `participant_job.sh` then recomputes the same `BRANCH` and fails on its bare
+   `mkdir "${BRANCH}"`. `--no-requeue` turns preemption into a clean failure that
+   `babs submit` can retry under a new job id. Expect occasional resubmissions.
 
 ## Adding a New BIDS App
 

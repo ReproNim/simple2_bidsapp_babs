@@ -22,17 +22,69 @@ babs_setup_logging() {
     local scratch_dir="$1"
     local app_name="$2"
 
+    # First-ever run of an app has no scratch dir yet, and this runs before
+    # RUN_DIR is created -- without this, tee fails and the run has no log.
+    mkdir -p "$scratch_dir"
+
     LOG_FILE="${scratch_dir}/babs_script_${RUN_DATE}_$(date +%Y%m%d_%H%M%S).log"
     echo "=== Script started at $(date) ===" | tee "$LOG_FILE"
     exec > >(tee -a "$LOG_FILE") 2>&1
+}
+
+# Environment used on the LOGIN side (i.e. for `babs init`/`babs submit`).
+# Must be a BABS revision containing PennLINC/babs#369: the configs here use the
+# BIDS-study layout (analysis_path ".", inputs under sourcedata/), and v0.5.2 --
+# what the plain `babs` env holds -- silently produces the OLD project structure
+# instead of erroring. Override with BABS_ENV if you install it elsewhere.
+BABS_ENV="${BABS_ENV:-babs-369}"
+
+# NIDM derivative to use as the augmentation source. `derivatives/nidm` does not
+# exist in the satra study tree; the real shared resource is versioned.
+# Override with BABS_NIDM_DERIV to point at a different NIDM release.
+BABS_NIDM_DERIV="${BABS_NIDM_DERIV:-nidm_4.5.0}"
+
+# Fail fast if the active babs cannot honour the BIDS-study layout keys the
+# configs set. This is worth a hard check rather than a README line, because the
+# failure is silent: babs 0.5.2's base.py hardcodes
+#     self.analysis_path  = op.join(self.project_root, 'analysis')
+#     self.input_ria_path = op.join(self.project_root, 'input_ria')
+# and never reads them from the config, and nothing rejects the now-unknown keys.
+# `babs init` then succeeds and quietly builds a LEGACY-layout project. Worse,
+# the mistake stays hidden downstream, because a legacy project does have a
+# top-level output_ria for a harvest script to find.
+#
+# Limitation: this compares the release triple only, so a hypothetical
+# 0.5.5.devN predating PennLINC/babs#369 would pass. It catches the case that
+# actually occurs -- an env still on 0.5.2.
+babs_require_pr369() {
+    local raw ver min="0.5.5"
+    raw="$(babs --version 2>&1 | tail -1)"
+    ver="$(printf '%s' "$raw" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+
+    if [ -z "$ver" ]; then
+        echo "WARNING: could not parse a version from 'babs --version' (${raw})." >&2
+        echo "  Skipping the PR#369 check -- verify the layout by hand." >&2
+        return 0
+    fi
+
+    if [ "$(printf '%s\n%s\n' "$min" "$ver" | sort -V | head -1)" != "$min" ]; then
+        echo "ERROR: babs ${ver} (env: ${BABS_ENV}) predates PennLINC/babs#369." >&2
+        echo "  The configs here set analysis_path / input_ria_path /" >&2
+        echo "  output_ria_path. This babs ignores them SILENTLY and would build a" >&2
+        echo "  legacy-layout project instead -- no error, wrong result." >&2
+        echo "  Install a babs >= ${min} and point BABS_ENV at it." >&2
+        exit 1
+    fi
 }
 
 # Set up environment - source bashrc, activate babs, load apptainer
 babs_setup_env() {
     echo "Setting up environment..."
     source ~/.bashrc
-    micromamba activate babs
+    micromamba activate "$BABS_ENV"
     module load apptainer 2>/dev/null || true
+    echo "Using BABS: $(babs --version 2>&1 | tail -1) (env: ${BABS_ENV})"
+    babs_require_pr369
 }
 
 # Generic container setup
@@ -181,17 +233,37 @@ babs_configure_session_selection() {
     fi
 }
 
+# Resolve the NIDM input dataset for a dataset/site.
+# Usage: babs_nidm_origin <dataset_name> <site_name>
+babs_nidm_origin() {
+    echo "${DATALAD_SET_DIR}/${1}/site-${2}/derivatives/${BABS_NIDM_DERIV}"
+}
+
+# Resolve the BABS project directory inside the study tree.
+# The project must live beside the other derivatives (that is where the study
+# layout expects results to land), NOT in scratch: scratch is only the compute
+# space, and a project created there is invisible to anything reading the study.
+# Usage: babs_study_output_dir <dataset_name> <site_name> <app_name>
+babs_study_output_dir() {
+    echo "${DATALAD_SET_DIR}/${1}/site-${2}/derivatives/babs-${3}_${RUN_DATE}"
+}
+
 # Check NIDM directory for incremental building
 # Usage: babs_check_nidm <dataset_name> <site_name>
 babs_check_nidm() {
     local dataset_name="$1"
     local site_name="$2"
-    local nidm_dir="${DATALAD_SET_DIR}/${dataset_name}/site-${site_name}/derivatives/nidm"
+    local nidm_dir
+    nidm_dir="$(babs_nidm_origin "$dataset_name" "$site_name")"
 
-    if [ -d "$nidm_dir" ] && [ -f "$nidm_dir/nidm.ttl" ]; then
-        echo "Found NIDM directory at $nidm_dir - NIDM will be built incrementally"
+    # Per-subject layout: <nidm_deriv>/sub-<id>/nidm.ttl (there is no nidm.ttl at
+    # the derivative root, so checking for one there always reported "not found").
+    if [ -d "$nidm_dir" ] && compgen -G "${nidm_dir}/sub-*/nidm.ttl" >/dev/null; then
+        local n
+        n=$(compgen -G "${nidm_dir}/sub-*/nidm.ttl" | wc -l)
+        echo "Found NIDM at $nidm_dir (${n} subject file(s)) - NIDM will be built incrementally"
     else
-        echo "No NIDM directory found - NIDM will be created from scratch"
+        echo "No NIDM found at $nidm_dir - NIDM will be created from scratch"
     fi
 }
 
@@ -206,12 +278,27 @@ babs_init_and_submit() {
 
     echo "Initializing BABS with the dataset-specific output directory..."
 
+    # Optional pilot / re-run subset: set BABS_LIST_SUB_FILE to a CSV with a
+    # 'sub_id' column (plus 'ses_id' for session-level projects) to restrict the
+    # project to those subjects. Unset means "every subject in the input".
+    local list_sub_args=()
+    if [ -n "${BABS_LIST_SUB_FILE:-}" ]; then
+        if [ ! -f "$BABS_LIST_SUB_FILE" ]; then
+            echo "ERROR: BABS_LIST_SUB_FILE not found: $BABS_LIST_SUB_FILE" >&2
+            exit 1
+        fi
+        echo "Restricting project to subjects listed in $BABS_LIST_SUB_FILE:"
+        cat "$BABS_LIST_SUB_FILE"
+        list_sub_args=( --list_sub_file "$BABS_LIST_SUB_FILE" )
+    fi
+
     babs init \
         --container_ds "${container_ds_path}" \
         --container_name "${container_name}" \
         --container_config "${config_path}" \
         --processing_level "${processing_level}" \
         --queue slurm \
+        ${list_sub_args[@]+"${list_sub_args[@]}"} \
         "${output_dir}"
 
     cd "${output_dir}" || exit 1
@@ -223,9 +310,20 @@ babs_init_and_submit() {
     # pre-check on `<analysis_path>/inputs/data` that does not exist in that
     # layout, raising FileNotFoundError before it reaches the real per-input-
     # dataset validation. That pre-check is redundant with the per-dataset loop
-    # that follows it, so bypassing check-setup here does not lose validation of
-    # the input datasets themselves. Set BABS_SKIP_CHECK_SETUP=1 to skip it for
-    # study-layout projects until babs fixes check_setup.py upstream.
+    # that follows it, so bypassing check-setup does not lose validation of the
+    # input datasets themselves.
+    #
+    # It DOES cost something, though, and not just dataset checks: `--job_test`
+    # is documented in babs as "Whether to submit and run a test job", so
+    # skipping it skips a real sbatch submission with this config's
+    # cluster_resources. That is not hypothetical -- the ants config once asked
+    # for --time=18:00:00 against mit_normal's 12h cap, which sbatch rejects
+    # outright, and with this flag set the project built completely and then
+    # submitted nothing. A test job would have surfaced it at setup time.
+    #
+    # So: use it to work around the upstream crash, not as a default. Set
+    # BABS_SKIP_CHECK_SETUP=1 for study-layout projects until babs fixes
+    # check_setup.py upstream.
     local check_setup_ok=0
     if [ "${BABS_SKIP_CHECK_SETUP:-0}" = "1" ]; then
         echo "BABS_SKIP_CHECK_SETUP=1: skipping 'babs check-setup'"
@@ -239,9 +337,28 @@ babs_init_and_submit() {
         fi
     fi
 
+    # Optional controlled ramp: set BABS_SUBMIT_COUNT=N to submit only the first
+    # N jobs. Use it when an app's memory/wall-clock needs are still unverified --
+    # measure MaxRSS/Elapsed from the first completions, size cluster_resources
+    # from real data, then `babs submit` the rest into the same project. Unset
+    # means "submit every remaining job".
+    local submit_args=()
+    if [ -n "${BABS_SUBMIT_COUNT:-}" ]; then
+        if ! [[ "$BABS_SUBMIT_COUNT" =~ ^[1-9][0-9]*$ ]]; then
+            echo "ERROR: BABS_SUBMIT_COUNT must be a positive integer (got '$BABS_SUBMIT_COUNT')" >&2
+            exit 1
+        fi
+        submit_args=( --count "$BABS_SUBMIT_COUNT" )
+    fi
+
     if [ "$check_setup_ok" -eq 1 ]; then
-        echo "Submitting all jobs..."
-        babs submit
+        if [ -n "${BABS_SUBMIT_COUNT:-}" ]; then
+            echo "Submitting first ${BABS_SUBMIT_COUNT} job(s) (BABS_SUBMIT_COUNT set)..."
+            echo "  Submit the rest later with: babs submit \"${output_dir}\""
+        else
+            echo "Submitting all jobs..."
+        fi
+        babs submit ${submit_args[@]+"${submit_args[@]}"}
     else
         echo "BABS setup check failed. Please review the errors above."
         echo "If this is the known study-layout check_setup bug (FileNotFoundError"

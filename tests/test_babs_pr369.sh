@@ -24,6 +24,13 @@ for template in "$REPO_ROOT"/config_*-nidm.yaml; do
     grep -q 'path_in_babs: sourcedata/BIDS' "$config_path"
     grep -q 'path_in_babs: sourcedata/NIDM' "$config_path"
 
+    # The per-subject zip scheme depends on ${subid} SURVIVING templating:
+    # babs_prepare_yaml_config only substitutes the vars passed to it, so
+    # ${subid} must reach the rendered participant_job.sh where bash expands it
+    # per job. If a future change ever substitutes it, every job would zip the
+    # same literal folder name and the subjects would collide again.
+    grep -q '^[[:space:]]*\${subid}: ' "$config_path"
+
     babs_configure_session_selection "$config_path" subject
     if grep -q '^[[:space:]]*\$SESSION_SELECTION_FLAG:' "$config_path"; then
         echo "Session selection leaked into subject config: $config_path" >&2

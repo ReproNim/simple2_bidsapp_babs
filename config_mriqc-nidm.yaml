@@ -21,6 +21,8 @@ input_datasets:
 # Arguments passed to the application inside the container
 bids_app_args:
     $SUBJECT_SELECTION_FLAG: "--participant-label"
+    # NIDM is picked up automatically from <bids_dir>/../NIDM, i.e. the mounted
+    # sourcedata/NIDM input dataset. No flag needed.
     --mem: "16G"
     --nprocs: "12"
     --omp-nthreads: "8"
@@ -28,19 +30,62 @@ singularity_args:
     - --userns
     - --no-home
     - --writable-tmpfs
-# Output foldername(s) to be zipped:
+# Output foldername(s) to be zipped. The app writes <output>/sub-<id>/... with
+# no app-name wrapper (per-subject layout). ${subid} is NOT substituted by
+# babs_prepare_yaml_config (only vars passed to it are); it survives into the
+# rendered participant_job.sh where bash defines ${subid} at runtime, so each
+# job zips its own subject folder: sub-<id>_sub-<id>-0-1-0.zip.
 zip_foldernames:
-    mriqc-nidm_bidsapp: "0-1-0"
+    ${subid}: "0-1-0"
 # How much cluster resources it needs:
 cluster_resources:
     interpreting_shell: "/bin/bash"
+    # mit_preemptable: 591 nodes and a 2-day ceiling, versus mit_normal's 50
+    # nodes and 12h. The throughput difference is the reason to be here.
+    #
+    # --no-requeue is MANDATORY on this partition, not optional tuning.
+    # mit_preemptable has PreemptMode=REQUEUE and GraceTime=0. A requeued job
+    # keeps its SLURM job id, so participant_job.sh recomputes the SAME
+    # BRANCH="job-${SLURM_ARRAY_JOB_ID}-${SLURM_ARRAY_TASK_ID}-${subid}" and then
+    # hits its bare `mkdir "${BRANCH}"` (line 47, no -p) against the directory
+    # the killed attempt left behind -- a guaranteed failure. The script does
+    # register `trap cleanup EXIT` to remove that directory, but an untrapped
+    # SIGTERM/SIGKILL bypasses an EXIT trap, and GraceTime=0 leaves no window
+    # anyway. The freesurfer aug20 run lost sub-0051457 exactly this way.
+    #
+    # With --no-requeue, SLURM cancels instead of requeueing (PreemptMode=REQUEUE
+    # requeues only jobs that permit it). Preemption then becomes a clean job
+    # failure, and `babs submit` retries it under a NEW array job id -- hence a
+    # new BRANCH and no collision. Expect some jobs to need resubmission; that is
+    # the trade for the extra nodes.
+    #
+    # MEASURED on ABIDE Caltech (study-ABIDE, 1 T1w + 1 rest bold per subject),
+    # job 21392449, 2026-08-27, 12 cpus, this container:
+    #     sub-0051456  Elapsed 00:04:19  MaxRSS 10.36 GB
+    #     sub-0051457  Elapsed 00:04:53  MaxRSS 10.23 GB
+    # Sized at roughly 2x observed peak memory and 6x observed wall clock, the
+    # headroom covering slower nodes and longer BOLD runs at other sites. The
+    # first run of this app used 24G/02:00:00, which these numbers show was a
+    # ~2.3x / ~25x over-request.
+    #
+    # The SBATCH allocation must stay STRICTLY ABOVE mriqc's own `--mem: "16G"`
+    # above. That value is the budget nipype schedules against, so if mriqc ever
+    # spends what it has been told it may use, an allocation equal to it is an
+    # OOM kill at exactly that number -- with nothing left over for the
+    # interpreter and I/O on top. Observed peak is 10.36 GB, so this is headroom
+    # rather than a live problem, but the margin should not be zero for a number
+    # the app itself treats as available.
     customized_text: |
         #SBATCH --partition=mit_preemptable
+        #SBATCH --no-requeue
         #SBATCH --cpus-per-task=12
-        #SBATCH --mem=18G
-        #SBATCH --time=00:25:00
+        #SBATCH --mem=20G
+        #SBATCH --time=00:30:00
         #SBATCH --job-name=mriqc-nidm_bidsapp_${RUN_DATE}
-# Necessary commands to be run first:
+# Necessary commands to be run first. This runs on the COMPUTE side
+# (participant_job.sh), which only needs datalad/git-annex/apptainer -- not the
+# babs CLI itself, so the plain `babs` env is fine here. The login-side env used
+# for `babs init`/`babs submit` is set by babs_common.sh (BABS_ENV=babs-369).
 script_preamble: |
     source ~/.bashrc
     micromamba activate babs
@@ -56,3 +101,6 @@ alert_log_messages:
         - "ERROR:"
         - "Cannot allocate memory"
         - "Numerical result out of range"
+        - "MRIQC execution failed"
+        - "All subjects failed to process"
+        - "csv2nidm tool not found"
