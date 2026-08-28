@@ -245,6 +245,16 @@ babs_nidm_origin() {
 # space, and a project created there is invisible to anything reading the study.
 # Usage: babs_study_output_dir <dataset_name> <site_name> <app_name>
 babs_study_output_dir() {
+    # BABS_OUTPUT_DIR wins when set: it lets a run place the project at a fixed,
+    # undated path -- e.g. the canonical deliverable a site publishes -- without
+    # disturbing RUN_DATE, which still names the scratch run dir, the compute
+    # space, the log file and the SLURM job. Renaming after `babs init` is not a
+    # simple `mv`: babs bakes absolute paths into code/submit_job_template.yaml,
+    # so the final path has to be chosen up front.
+    if [ -n "${BABS_OUTPUT_DIR:-}" ]; then
+        echo "$BABS_OUTPUT_DIR"
+        return
+    fi
     echo "${DATALAD_SET_DIR}/${1}/site-${2}/derivatives/babs-${3}_${RUN_DATE}"
 }
 
