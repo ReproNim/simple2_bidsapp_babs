@@ -378,6 +378,19 @@ babs_init_and_submit() {
     if [ "${BABS_TEXT2GIT:-1}" = "1" ]; then
         echo "Applying text2git so .ttl/.json/.tsv land in git, not annex..."
         datalad run-procedure -d "${output_dir}" cfg_text2git
+
+        # Push the commit to both RIA siblings immediately. `babs init` already
+        # published master to them BEFORE this commit existed, and nothing later
+        # pushes it: `babs submit` does no push, jobs clone from the input RIA,
+        # and `babs merge` advances the output RIA from the job branches. Left
+        # unpushed, the rule (a) never reaches the job clones, and (b) strands
+        # the local branch permanently one commit ahead of output/master -- a
+        # root-level .gitattributes change, outside code/, which is exactly the
+        # divergence post_babs.sh refuses to auto-replay at harvest time.
+        # --data nothing: this is a git-history push, no annexed content.
+        echo "Publishing the text2git commit to the RIA siblings..."
+        datalad push --to input --data nothing
+        datalad push --to output --data nothing
     fi
 
     # Check the setup before submitting.
