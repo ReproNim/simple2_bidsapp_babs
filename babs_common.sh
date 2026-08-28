@@ -32,11 +32,12 @@ babs_setup_logging() {
 }
 
 # Environment used on the LOGIN side (i.e. for `babs init`/`babs submit`).
-# Must be a BABS revision containing PennLINC/babs#369: the configs here use the
-# BIDS-study layout (analysis_path ".", inputs under sourcedata/), and v0.5.2 --
-# what the plain `babs` env holds -- silently produces the OLD project structure
-# instead of erroring. Override with BABS_ENV if you install it elsewhere.
-BABS_ENV="${BABS_ENV:-babs-369}"
+# Must hold a BABS revision containing PennLINC/babs#369 (merged 2026-07, but in
+# no PyPI release as of 0.5.4 -- install from git main): the configs here use
+# the BIDS-study layout (analysis_path ".", inputs under sourcedata/), and any
+# released babs silently produces the OLD project structure instead of erroring.
+# Override with BABS_ENV if you install it elsewhere.
+BABS_ENV="${BABS_ENV:-babs}"
 
 # NIDM derivative to use as the augmentation source. `derivatives/nidm` does not
 # exist in the satra study tree; the real shared resource is versioned.
@@ -245,17 +246,23 @@ babs_nidm_origin() {
 # space, and a project created there is invisible to anything reading the study.
 # Usage: babs_study_output_dir <dataset_name> <site_name> <app_name>
 babs_study_output_dir() {
-    # BABS_OUTPUT_DIR wins when set: it lets a run place the project at a fixed,
-    # undated path -- e.g. the canonical deliverable a site publishes -- without
-    # disturbing RUN_DATE, which still names the scratch run dir, the compute
-    # space, the log file and the SLURM job. Renaming after `babs init` is not a
-    # simple `mv`: babs bakes absolute paths into code/submit_job_template.yaml,
-    # so the final path has to be chosen up front.
+    # BABS_OUTPUT_DIR wins when set: it places the project at an arbitrary path.
+    # Renaming after `babs init` is not a simple `mv`: babs bakes absolute paths
+    # into code/submit_job_template.yaml, so the final path has to be chosen up
+    # front.
     if [ -n "${BABS_OUTPUT_DIR:-}" ]; then
         echo "$BABS_OUTPUT_DIR"
         return
     fi
-    echo "${DATALAD_SET_DIR}/${1}/site-${2}/derivatives/babs-${3}_${RUN_DATE}"
+    # Default is UNDATED: the project's own git history carries every date that
+    # matters, and a date suffix in the folder name is what previously left the
+    # study with parallel half-runs (babs-freesurfer-nidm_aug20 + _aug26) that
+    # then had to be hand-merged and renamed. RUN_DATE still stamps the scratch
+    # run dir, the compute space, the log file and the SLURM job name, which are
+    # per-attempt rather than part of the deliverable. If a project already
+    # exists here, `babs init` refuses -- deliberately: resuming or redoing a
+    # site is a decision, made explicit via BABS_OUTPUT_DIR.
+    echo "${DATALAD_SET_DIR}/${1}/site-${2}/derivatives/babs-${3}"
 }
 
 # Check NIDM directory for incremental building

@@ -1,272 +1,179 @@
-# BABS Scripts for BIDS Apps with NIDM
+# BABS scripts for the NIDM BIDS Apps
 
-BABS (BIDS App Bootstrap) scripts for running ANTs-NIDM, FreeSurfer-NIDM, and MRIQC-NIDM on SLURM clusters.
+This repository runs three NIDM-emitting BIDS Apps — [FreeSurfer](https://github.com/ReproNim/freesurfer-nidm_bidsapp), [ANTs](https://github.com/ReproNim/ants-nidm_bidsapp), and [MRIQC](https://github.com/sensein/mriqc-nidm_bidsapp) — over a DataLad study dataset on a SLURM cluster, using [BABS](https://github.com/PennLINC/babs) to manage one job per subject.
 
-## Environment Setup
-
-```bash
-# Download BABS HPC environment file
-wget https://raw.githubusercontent.com/PennLINC/babs/refs/heads/main/environment_hpc.yml
-
-# Create environment from YAML
-micromamba create -f environment_hpc.yml -y
-
-# Install BABS
-micromamba activate babs
-pip install babs
-```
-
-## Project Structure
-
-```
-simple2_bidsapp_babs/
-├── babs_common.sh                # Shared functions library
-├── ants-nidm_babs_script.sh      # ANTs-NIDM pipeline script
-├── freesurfer-nidm_babs_script.sh # FreeSurfer-NIDM pipeline script
-├── mriqc-nidm_babs_script.sh     # MRIQC-NIDM pipeline script
-├── config_ants-nidm.yaml         # ANTs-NIDM BIDS App configuration
-├── config_freesurfer-nidm.yaml   # FreeSurfer-NIDM BIDS App configuration
-├── config_mriqc-nidm.yaml        # MRIQC-NIDM BIDS App configuration
-└── .env                          # Environment variables
-```
-
-## Environment Variables (.env)
-
-Create a `.env` file in the project directory:
+Each app has a thin wrapper script; everything they share lives in `babs_common.sh`. A wrapper takes a site through the whole launch sequence in one command: it finds the container image, builds a DataLad container dataset, fills in the app's YAML config, runs `babs init`, and submits one SLURM job per subject. You then wait for the jobs, resubmit any preemption casualties, and harvest the results with the study's own post-processing script.
 
 ```bash
-BASE_DIR='/path/of/current/repo/' # e.g., '/home/yibei/simple2_bidsapp_babs'
-SCRATCH_DIR = 'path/to/your/output/' # e.g., '/orcd/scratch/bcs/001/yibei/simple2'
-SCRATCH_DIR_ANTS= SCRATCH_DIR + 'ants_bidsapp_babs'
-SCRATCH_DIR_FS= SCRATCH_DIR + 'fs_bidsapp_babs'
-SCRATCH_DIR_MRIQC= SCRATCH_DIR + 'mriqc_bidsapp_babs'
-SCRATCH_DIR_COMPUTE= '/path/to/your/computespace' #e.g., '/orcd/scratch/bcs/001/yibei/'
-DATALAD_SET_DIR= '/path/to/your/input/data/' # e.g.,'/orcd/data/satra/002/datasets/simple2_datalad'
-```
-
-`SCRATCH_DIR_ANTS`, `SCRATCH_DIR_FS`, and `SCRATCH_DIR_MRIQC` are used by the ANTs, FreeSurfer, and MRIQC wrapper scripts respectively. I like to put all of those  three together under `SCRATCH_DIR`, you can reorganize them in whatever way you prefer.
-
-## Usage
-
-### Basic Usage
-
-The run date (YYMMDD format) is **automatically generated** from the current date.
-
-```bash
-# ANTs-NIDM pipeline
-./ants-nidm_babs_script.sh Caltech study-ABIDE
-
-# FreeSurfer-NIDM pipeline
 ./freesurfer-nidm_babs_script.sh Caltech study-ABIDE
-
-# MRIQC-NIDM pipeline
-./mriqc-nidm_babs_script.sh Caltech study-ABIDE
 ```
 
-### Override Run Date
+This exact pipeline produced the 38-subject Caltech FreeSurfer derivative in `study-ABIDE/site-Caltech/derivatives/babs-freesurfer-nidm`, so every step below is validated end to end.
 
-To use a specific date instead of auto-generation:
+## How the pieces fit together
+
+The scripts expect a study dataset laid out the way the SIMPLE2 DataLad tree is:
+
+```
+<DATALAD_SET_DIR>/<study>/site-<SITE>/
+├── sourcedata/raw          # the BIDS input dataset
+├── derivatives/nidm_4.5.0  # existing per-subject NIDM records the apps augment
+├── derivatives/babs-<app>  # <- a run creates this (the BABS project)
+└── code/post_babs.sh       # the study's harvest script (see Post-processing)
+```
+
+Three kinds of storage are involved, and they are deliberately separate:
+
+- **The study tree** (`DATALAD_SET_DIR`) holds the inputs and receives the finished BABS project. This is the durable, shared location.
+- **Scratch** (`SCRATCH_DIR_*`) holds each run's working copy of the config, the container DataLad dataset, and the run log. Disposable after harvest.
+- **Compute space** (`SCRATCH_DIR_COMPUTE`) is where the individual SLURM jobs clone, run, and zip their results. BABS cleans up after successful jobs.
+
+## Prerequisites (one-time setup)
+
+### 1. BABS — must be installed from git main, not PyPI
+
+The configs here use the configurable BIDS-study layout from [PennLINC/babs PR #369](https://github.com/PennLINC/babs/pull/369) (`analysis_path: "."`, inputs under `sourcedata/`, RIA stores under `.babs/`). That PR is merged upstream, but the latest release (0.5.4) predates it — and the failure mode on any released babs is nasty: the three layout keys are **silently ignored**, `babs init` succeeds, and you get a legacy-layout project with no error, which the harvest script then can't process.
 
 ```bash
-export RUN_DATE=1230
-./ants-nidm_babs_script.sh Caltech study-ABIDE
-```
-
-### Arguments
-
-| Argument | Description | Example |
-|----------|-------------|---------|
-| `<site_name>` | Site identifier | `Caltech` |
-| `<dataset_name>` | Dataset name | `study-ABIDE` |
-
-## Output Structure
-
-```
-/orcd/scratch/bcs/001/yibei/simple2/
-├── ants_bidsapp_babs/
-│   └── study-ABIDE_1230/
-│       ├── ants-nidm_bidsapp-container/
-│       ├── config_ants-nidm.yaml
-│       └── ants-nidm_bidsapp_Caltech_1230/    # BABS project directory
-├── fs_bidsapp_babs/
-│   └── study-ABIDE_1230/
-│       ├── freesurfer-nidm_bidsapp-container/
-│       ├── config_freesurfer-nidm.yaml
-│       └── freesurfer-nidm_bidsapp_Caltech_1230/
-└── mriqc_bidsapp_babs/
-    └── study-ABIDE_1230/
-        ├── mriqc-nidm_bidsapp-container/
-        ├── config_mriqc-nidm.yaml
-        └── mriqc-nidm_bidsapp_Caltech_1230/
-```
-
-## Manual BABS Commands
-
-After the script creates the BABS project directory:
-
-```bash
-# Navigate to project directory
-cd /orcd/scratch/bcs/001/yibei/simple2/ants_bidsapp_babs/study-ABIDE_1230/ants-nidm_bidsapp_Caltech_1230
-
-# Activate environment
+micromamba create -n babs -f environment_hpc.yml -y
 micromamba activate babs
+pip install git+https://github.com/PennLINC/babs.git
+```
 
-# Check setup
-babs check-setup .
+(`environment_hpc.yml` ships in this repo; it is BABS's own HPC environment file.) The wrappers activate the `babs` env by name — set `BABS_ENV` in `.env` if you called yours something else — and refuse to run if the active babs predates 0.5.5, so a stale env fails loudly rather than building a broken project. Once a release containing the layout exists, plain `pip install babs` will do.
 
-# Submit jobs
-babs submit
+### 2. Cluster software
 
-# Check job status
+Apptainer (or Singularity) for running the containers, and `git-annex` — the wrappers load the `apptainer` module themselves; git-annex comes with the micromamba env. DataLad is installed by `environment_hpc.yml`.
+
+### 3. The container image
+
+Each wrapper looks for its `.sif` file (e.g. `freesurfer-nidm_bidsapp.sif`) in this repo's directory first, then in a short list of fallback paths. Build the image from the matching app repository (each has a `Singularity` recipe and a `setup.py` helper) and drop it next to the scripts. The expected filenames are set at the top of each wrapper script.
+
+### 4. A `.env` file
+
+The wrappers source `.env` from the **current working directory**, so always run them from this repo's root. It is plain bash (no spaces around `=`), so `$HOME` and friends work. A template — replace `<scratch>` with your cluster's scratch/work filesystem and `<data>` with wherever the study's DataLad tree lives:
+
+```bash
+BASE_DIR="$HOME/simple2_bidsapp_babs"                    # where you cloned this repo
+SCRATCH_DIR_FS="<scratch>/simple2/fs_bidsapp_babs"       # per-app run dirs + logs
+SCRATCH_DIR_ANTS="<scratch>/simple2/ants_bidsapp_babs"
+SCRATCH_DIR_MRIQC="<scratch>/simple2/mriqc_bidsapp_babs"
+SCRATCH_DIR_COMPUTE="<scratch>"                          # where SLURM jobs execute
+DATALAD_SET_DIR="<data>/simple2_datalad"                 # root of the study tree
+FS_LICENSE="$HOME/license.txt"                           # FreeSurfer runs only
+```
+
+### 5. FreeSurfer license (FreeSurfer runs only)
+
+Get a free license from [the FreeSurfer site](https://surfer.nmr.mgh.harvard.edu/registration.html) and point `FS_LICENSE` at it. The wrapper fails fast at launch — not two hours later inside every job — if the variable is unset or the file is missing.
+
+The license cannot be baked into the container image: FreeSurfer licenses are personal (issued per registrant), and the images are shared, so embedding one would redistribute it to every user of the image, which the FreeSurfer license terms don't allow. Binding your own license at runtime is the intended mechanism.
+
+### 6. Git access to datasets you don't own
+
+Shared study trees are routinely operated on by people other than their owner, and git refuses that by default ("dubious ownership"). Allow the paths you'll work with:
+
+```bash
+git config --global --add safe.directory '<DATALAD_SET_DIR>/<study>/site-<SITE>'
+git config --global --add safe.directory '<DATALAD_SET_DIR>/<study>/site-<SITE>/sourcedata/raw'
+```
+
+The harvest script checks this up front and prints the exact command when it's missing.
+
+## Running
+
+```bash
+# subject-level (the default)
+./freesurfer-nidm_babs_script.sh Caltech study-ABIDE
+./ants-nidm_babs_script.sh Caltech study-ABIDE
+./mriqc-nidm_babs_script.sh Caltech study-ABIDE
+
+# session-level, for multi-session datasets
+./freesurfer-nidm_babs_script.sh Brown study-ADHD200 session
+```
+
+Where things land:
+
+- **BABS project** (the deliverable): `<DATALAD_SET_DIR>/<study>/site-<SITE>/derivatives/babs-<app>` — deliberately **undated**. The project's own git history records when everything happened; a date in the folder name is redundant provenance that would have to be corrected later (and BABS projects can't be renamed after `babs init` — absolute paths are baked in). If a project already exists there, `babs init` refuses, which makes redoing a site an explicit decision rather than an accident.
+- **Scratch run dir**: `<SCRATCH_DIR_app>/<study>_<RUN_DATE>/` — config copy, container dataset
+- **Log**: `<SCRATCH_DIR_app>/babs_script_<RUN_DATE>_<timestamp>.log` — everything the run printed, survives your terminal
+
+`RUN_DATE` (auto-generated as `YYMMDD`, e.g. `260827`) stamps only these per-attempt items — the scratch run dir, compute space, log file, and SLURM job — never the deliverable.
+
+### Knobs
+
+All optional, all environment variables:
+
+| Variable | What it does |
+|---|---|
+| `RUN_DATE=260827` | Pin the per-attempt date stamp instead of auto-generating it. |
+| `BABS_OUTPUT_DIR=/path` | Put the project somewhere other than the default `derivatives/babs-<app>` — e.g. for a deliberate second run of a site whose project already exists. Must be decided before `babs init`; the project cannot be renamed afterwards. |
+| `BABS_SKIP_CHECK_SETUP=1` | **Currently required for every run.** `babs check-setup` crashes on the PR #369 study layout (it hardcodes a `inputs/data` path that no longer exists). The wrapper prints a reminder when it skips. |
+| `BABS_SUBMIT_COUNT=N` | Submit only the first N jobs — a controlled ramp for when an app's memory/time needs are unverified. Measure the first completions, adjust the config, then `babs submit` the rest into the same project. |
+| `BABS_LIST_SUB_FILE=/path.csv` | Restrict the project to the subjects in a CSV (single `sub_id` column). For pilots and re-runs. |
+| `BABS_ENV=name` | Micromamba env holding babs (default `babs`). |
+| `BABS_NIDM_DERIV=name` | Which NIDM derivative under `derivatives/` to augment (default `nidm_4.5.0`). |
+
+## While the jobs run
+
+Check on things from the project directory:
+
+```bash
+micromamba activate babs
+cd <DATALAD_SET_DIR>/<study>/site-<SITE>/derivatives/babs-<app>
 babs status
-
-# Merge results (after completion)
-babs merge
 ```
 
-## BABS project layout
+Two SLURM realities to know about:
 
-The supplied configs use the configurable BIDS-study layout introduced by
-[PennLINC/babs PR #369](https://github.com/PennLINC/babs/pull/369):
+**Preemption is expected.** The configs use `mit_preemptable` (591 nodes, 2-day ceiling) rather than `mit_normal` (50 nodes, 12 h) — more throughput, occasional casualties. Every config also sets `#SBATCH --no-requeue`, and must: the partition requeues preempted jobs under the *same* SLURM id, the job then recomputes the same branch name, and its `mkdir` fails. `--no-requeue` turns preemption into a clean failure that can simply be resubmitted. (Of the 38 Caltech FreeSurfer jobs, 4 were preempted; all completed on resubmission.)
 
-```yaml
-analysis_path: "."
-input_ria_path: ".babs/input_ria"
-output_ria_path: ".babs/output_ria"
-```
-
-The project directory is therefore the analysis DataLad dataset, input
-datasets are installed beneath `sourcedata/`, and internal RIA stores live
-beneath `.babs/`. Use a BABS revision containing PR #369 with these configs.
-These configs therefore require a BABS revision containing PR #369; the
-wrappers activate one (`BABS_ENV`, default `babs-369`). On BABS 0.5.2 the three
-settings are silently ignored -- `base.py` hardcodes `analysis_path` and
-`input_ria_path`, and nothing rejects the unknown keys -- so you get a
-legacy-layout project with no error. The dataset's `post_babs.sh` only supports
-this study layout.
-
-For session-level runs, the wrappers add
-`$SESSION_SELECTION_FLAG: "--session-label"` to the generated config. They omit
-it for subject-level runs because BABS only defines `$sesid` in session jobs.
-
-## Post-Processing
-
-**Do not add a post-processing script here.** The canonical one is maintained
-in the dataset itself, per site:
-
-```
-<DATALAD_SET_DIR>/<study>/site-<SITE>/code/post_babs.sh
-```
-
-Run it against a finished BABS project directory:
+**Resubmission only works after the queue drains.** `babs submit` refuses to run — "There are still jobs running" — while *any* of the project's jobs are pending or running. So when a preemption notice arrives mid-run, there is nothing to do yet. Wait for the whole array to finish, then run one batch round:
 
 ```bash
-module load git-annex          # required: see below
-micromamba activate babs-369
-/orcd/data/satra/002/datasets/simple2_datalad/study-ABIDE/site-Caltech/code/post_babs.sh \
-    /orcd/data/satra/002/datasets/simple2_datalad/study-ABIDE/site-Caltech/derivatives/babs-<app>_<date>
+babs status     # refreshes the job table, marks the failures
+babs submit     # resubmits exactly the subjects without results
 ```
 
-It merges the per-job result branches, syncs the checked-out branch with the
-output RIA, fetches and unzips the result zips in place, drops the now-redundant
-zip content, and commits the site dataset's submodule pointer.
+Repeat if the resubmitted round itself loses jobs to preemption.
 
-That script handles a set of failure modes worth knowing about, and is the
-reason not to reimplement it:
+## After the jobs finish: post-processing
 
-- `git-annex` must be on PATH. These datasets set `filter.annex.process`, so any
-  `git checkout`/`rebase` shells out to `git-annex filter-process`; without it,
-  git empties or deletes tracked files partway through.
-- git's "dubious ownership" guard trips routinely, because these datasets are
-  run by whoever is doing the analysis rather than only by the owner. It is
-  checked up front, since the failure is otherwise misdiagnosed as a detached
-  HEAD.
-- `babs merge` is **not** idempotent: it deletes the `job-*` branches from the
-  output RIA once merged, so a second run reports "no successfully finished
-  job" for a project where everything in fact finished. It counts the RIA's
-  remaining `job-*` branches instead of inferring.
-- Local and output-RIA histories diverge normally (saving `code/` after jobs
-  were submitted), so `ff-only` legitimately fails; it replays local commits
-  when their net effect is confined to `code/`, leaving a timestamped backup ref.
-- Re-runs detect already-extracted subjects by directory rather than by annex
-  content, so an incremental run still extracts newly finished subjects without
-  re-fetching tens of GB only to skip it.
-
-### NIDM TTL merging
-
-Also the dataset's job, as part of that per-site script. This repo deliberately
-carries no merge script: it used to, and two divergent copies of a TTL merger is
-how a study ends up with a silently wrong `nidm_merge.ttl`.
-
-Two constraints any implementation has to meet, both measured against a real
-harvested project (`derivatives/babs-freesurfer-nidm_aug26`, 36 subjects):
-
-1. **Match the per-subject layout.** The apps write `sub-<id>[/ses-<x>]/nidm.ttl`
-   directly. A glob expecting an intermediate directory, e.g.
-   `sub-*/nidm_output/nidm.ttl` as in `utils/scripts/merge_ttl_files.py`, finds
-   **0** files on a current project and writes a near-empty merge without
-   erroring.
-2. **Exclude the non-result subtrees.** A bare recursive search for `nidm.ttl`
-   finds **74** files where only **36** are results: after an in-place harvest
-   the project root also holds `sourcedata/NIDM/sub-*/nidm.ttl` (the *input*
-   NIDM the app appended to) and, if a merge was interrupted, `merge_ds/` (a
-   clone of the same results). Merging either silently doubles the input graphs.
-   Skip `sourcedata`, `merge_ds`, `.babs`, `.git`, `.datalad`, `containers`,
-   `code`, `inputs`.
-
-A working implementation satisfying both, plus the duplicate-association pruning
-from the dataset's version, is retrievable from this repo's history:
+**The harvest script lives in the dataset, not in this repo** — `<DATALAD_SET_DIR>/<study>/site-<SITE>/code/post_babs.sh` — and that's deliberate: it's per-site, it's owned by the data manager, and two divergent copies of it is how a study ends up half-harvested.
 
 ```bash
-git show 342b960:merge_ttl_files.py
+micromamba activate babs
+<site>/code/post_babs.sh <site>/derivatives/babs-<app>
 ```
 
+It merges the per-job result branches, syncs the local checkout with the output RIA, fetches and unzips the result zips (one `sub-<id>/` per subject), drops the now-redundant zip content, and commits the site dataset's updated submodule pointer. It is safe to re-run: an interrupted harvest resumes, and an already-harvested project is detected rather than re-fetched.
 
+Failure modes it already handles — the reason not to reimplement it:
 
-## Configuration Files
+- **`git-annex` must be on PATH.** These datasets set `filter.annex.process`, so any checkout or rebase shells out to git-annex; without it, git quietly empties tracked files mid-operation.
+- **`babs merge` is not idempotent.** It deletes the `job-*` branches from the output RIA once merged, so a second invocation claims no job ever finished. The script counts the RIA's remaining job branches instead of believing that message.
+- **Local and RIA histories diverge routinely** (saving `code/` after submission). The script fast-forwards when possible and auto-replays local commits only when they're confined to `code/`, leaving a timestamped backup ref either way.
+- **Incremental harvests work.** Already-extracted subjects are detected by directory, so a re-run after a second batch of jobs extracts only the new subjects instead of re-fetching tens of GB.
 
-Each BIDS App has its own YAML configuration file:
+There is deliberately **no merged-TTL step**: the deliverable is the per-subject `sub-<id>/nidm.ttl` files, which downstream tools query as a group. Nothing consumes a concatenated `nidm_merge.ttl`, so none is produced.
 
-- **config_ants-nidm.yaml** - ANTs normalization settings
-  - 8 CPUs, 32GB memory, 18 hours time limit
+## Per-app configuration
 
-- **config_freesurfer-nidm.yaml** - FreeSurfer recon-all settings
-  - 8 CPUs, 24GB memory, 3.5 hours time limit
-  - Requires FreeSurfer license
+Each app's YAML config sets its SLURM resources, verified against real runs:
 
-- **config_mriqc-nidm.yaml** - MRIQC quality control settings
-  - 12 CPUs, 18GB memory, 25 minutes time limit
+| Config | Resources | Notes |
+|---|---|---|
+| `config_freesurfer-nidm.yaml` | 8 CPUs, 24 GB, 3.5 h | needs `FS_LICENSE`; jobs measured ~2–3 h, ~29 GB peak |
+| `config_ants-nidm.yaml` | 8 CPUs, 32 GB, 18 h | joint label fusion dominates the time |
+| `config_mriqc-nidm.yaml` | 12 CPUs, 18 GB, 25 min | |
 
-## Important Notes
+The wrappers substitute the environment-specific values (paths, license, session flag) into a copy of the config at launch; the copy lands in the scratch run directory so every run records exactly what it used.
 
-1. **Git Safe Directories**: For DataLad datasets owned by different users:
-   ```bash
-   git config --global --add safe.directory '/orcd/data/satra/002/datasets/simple2_datalad/study-ABIDE/Caltech/sourcedata/raw/.git'
-   git config --global --add safe.directory '/orcd/data/satra/002/datasets/simple2_datalad/study-ABIDE/Caltech/derivatives/nidm/.git'
-   ```
+## Adding a new BIDS App
 
-2. **FreeSurfer License**: Located at `/orcd/scratch/bcs/001/yibei/prettymouth_babs/license.txt`
+1. Create `config_<app>-nidm.yaml` (start from an existing one).
+2. Create `<app>-nidm_babs_script.sh` from an existing wrapper — the app-specific part is just the block of variables at the top: `APP_NAME`, `SCRATCH_DIR`, `CONTAINER_DS_NAME`, `CONTAINER_NAME`, `SIF_FILENAME`, `SIF_ALT_PATHS`.
+3. Add the matching `SCRATCH_DIR_<APP>` to `.env`.
 
-3. **NIDM Incremental Building**: If an NIDM directory exists at the target location, NIDM results will be built incrementally.
-
-4. **SLURM Partition**: Jobs use `mit_preemptable` by default (591 nodes, 2-day
-   ceiling) rather than `mit_normal` (50 nodes, 12h). Every config that uses it
-   must also pass `#SBATCH --no-requeue`: the partition has
-   `PreemptMode=REQUEUE`, a requeued job keeps its SLURM id, and
-   `participant_job.sh` then recomputes the same `BRANCH` and fails on its bare
-   `mkdir "${BRANCH}"`. `--no-requeue` turns preemption into a clean failure that
-   `babs submit` can retry under a new job id. Expect occasional resubmissions.
-
-## Adding a New BIDS App
-
-To add support for a new BIDS App:
-
-1. Create a new config file (e.g., `config_newapp-nidm.yaml`)
-2. Create a wrapper script (e.g., `newapp-nidm_babs_script.sh`) based on existing scripts
-3. Define app-specific variables:
-   - `APP_NAME` (e.g., "newapp-nidm")
-   - `SCRATCH_DIR`
-   - `CONTAINER_DS_NAME` (e.g., "newapp-nidm_bidsapp-container")
-   - `CONTAINER_NAME`
-   - `SIF_FILENAME`
-   - `SIF_ALT_PATHS`
+Everything else — argument parsing, container dataset setup, config substitution, init, submit — comes from `babs_common.sh`.
