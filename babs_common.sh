@@ -284,6 +284,52 @@ babs_check_nidm() {
     fi
 }
 
+# Resolve the Unix group that should own write access to a BABS project.
+#
+# Why this matters: without `--shared_group`, `babs init` creates the analysis
+# dataset with core.sharedRepository unset. git-annex then chmods every content
+# directory under .git/annex/objects to 0555 (r-xr-xr-x). Adding or dropping a
+# key requires *writing* that directory, and restoring the write bit requires
+# chmod -- which only the file's OWNER may do, never a mere group member. The
+# net effect is that a collaborator in the right Unix group can read the whole
+# derivative but cannot write a single annexed file, which is why the only way
+# to contribute was to clone it (the `_pub` clones under site-Caltech).
+# With --shared_group, annex creates those directories 2775 instead and any
+# group member can write in place.
+#
+# Default: inherit the group already owning the parent directory, so the project
+# matches whatever the study tree uses instead of hardcoding a site-specific
+# name. Override with BABS_SHARED_GROUP; set it to "none" to opt out entirely.
+# Usage: babs_shared_group <output_dir>
+babs_shared_group() {
+    local output_dir="$1"
+
+    if [ "${BABS_SHARED_GROUP:-}" = "none" ]; then
+        return 0
+    fi
+    if [ -n "${BABS_SHARED_GROUP:-}" ]; then
+        echo "$BABS_SHARED_GROUP"
+        return 0
+    fi
+
+    # Walk up to the first existing ancestor -- output_dir itself does not exist
+    # yet at `babs init` time.
+    local probe="$output_dir"
+    while [ -n "$probe" ] && [ ! -d "$probe" ]; do
+        probe=$(dirname "$probe")
+        [ "$probe" = "/" ] && break
+    done
+    [ -d "$probe" ] || return 0
+
+    local grp
+    grp=$(stat -c '%G' "$probe" 2>/dev/null) || return 0
+    # A personal group (same name as the user) grants nothing to collaborators.
+    if [ -z "$grp" ] || [ "$grp" = "UNKNOWN" ] || [ "$grp" = "$(id -un)" ]; then
+        return 0
+    fi
+    echo "$grp"
+}
+
 # Initialize BABS and submit jobs
 # Usage: babs_init_and_submit <container_ds_path> <container_name> <config_path> <output_dir> <processing_level>
 babs_init_and_submit() {
@@ -309,16 +355,60 @@ babs_init_and_submit() {
         list_sub_args=( --list_sub_file "$BABS_LIST_SUB_FILE" )
     fi
 
+    # See babs_shared_group() for why an unshared annex is effectively
+    # read-only for everyone except the user who ran `babs init`.
+    local shared_args=()
+    local shared_grp
+    shared_grp=$(babs_shared_group "${output_dir}")
+    if [ -n "$shared_grp" ]; then
+        echo "Granting write access to Unix group: ${shared_grp}"
+        shared_args=( --shared_group "$shared_grp" )
+    else
+        echo "NOTE: no shared group resolved; project will be writable only by $(id -un)."
+    fi
+
     babs init \
         --container_ds "${container_ds_path}" \
         --container_name "${container_name}" \
         --container_config "${config_path}" \
         --processing_level "${processing_level}" \
         --queue slurm \
+        ${shared_args[@]+"${shared_args[@]}"} \
         ${list_sub_args[@]+"${list_sub_args[@]}"} \
         "${output_dir}"
 
     cd "${output_dir}" || exit 1
+
+    # Put text files in git instead of git-annex.
+    #
+    # BABS hardcodes cfg_proc='yoda' when it creates the analysis dataset
+    # (bootstrap.py), so text2git cannot be passed through `babs init` and has to
+    # be applied to the project afterwards. Without it EVERY output is annexed --
+    # including the .ttl, .json and .tsv that are the point of these derivatives.
+    # Annexed files are 0444 symlinks into .git/annex/objects, so they cannot be
+    # read without `datalad get`, cannot be diffed by git, and cannot be edited by
+    # anyone but the annex object owner. Applying it here (before any job runs)
+    # means the rule is in .gitattributes ahead of the first harvested output.
+    #
+    # Binaries -- the per-subject zips, .nii.gz, .svg -- still go to annex, which
+    # is what we want: this only changes where *text* lands.
+    if [ "${BABS_TEXT2GIT:-1}" = "1" ]; then
+        echo "Applying text2git so .ttl/.json/.tsv land in git, not annex..."
+        datalad run-procedure -d "${output_dir}" cfg_text2git
+
+        # Push the commit to both RIA siblings immediately. `babs init` already
+        # published master to them BEFORE this commit existed, and nothing later
+        # pushes it: `babs submit` does no push, jobs clone from the input RIA,
+        # and `babs merge` advances the output RIA from the job branches. Left
+        # unpushed, the rule (a) never reaches the job clones, and (b) strands
+        # the local branch permanently one commit ahead of output/master -- a
+        # root-level .gitattributes change, outside code/, which is exactly the
+        # divergence post_babs.sh refuses to auto-replay at harvest time.
+        # --data nothing: this is a git-history push, no annexed content.
+        echo "Publishing the text2git commit to the RIA siblings..."
+        datalad push --to input --data nothing
+        datalad push --to output --data nothing
+    fi
 
     # Check the setup before submitting.
     #
