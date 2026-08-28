@@ -78,7 +78,7 @@ cluster_resources:
 # Necessary commands to be run first. This runs on the COMPUTE side
 # (participant_job.sh), which only needs datalad/git-annex/apptainer -- not the
 # babs CLI itself, so the plain `babs` env is fine here. The login-side env used
-# for `babs init`/`babs submit` is set by babs_common.sh (BABS_ENV=babs-369).
+# for `babs init`/`babs submit` is set by babs_common.sh (BABS_ENV, default `babs`).
 script_preamble: |
     source ~/.bashrc
     micromamba activate babs

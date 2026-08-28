@@ -18,7 +18,7 @@ The scripts expect a study dataset laid out the way the SIMPLE2 DataLad tree is:
 <DATALAD_SET_DIR>/<study>/site-<SITE>/
 ├── sourcedata/raw          # the BIDS input dataset
 ├── derivatives/nidm_4.5.0  # existing per-subject NIDM records the apps augment
-├── derivatives/babs-<app>_<date>   # <- a run creates this (the BABS project)
+├── derivatives/babs-<app>  # <- a run creates this (the BABS project)
 └── code/post_babs.sh       # the study's harvest script (see Post-processing)
 ```
 
@@ -32,15 +32,15 @@ Three kinds of storage are involved, and they are deliberately separate:
 
 ### 1. BABS — must be installed from git main, not PyPI
 
-The configs here use the configurable BIDS-study layout from [PennLINC/babs PR #369](https://github.com/PennLINC/babs/pull/369) (`analysis_path: "."`, inputs under `sourcedata/`, RIA stores under `.babs/`). That layout is not in any PyPI release yet, and the failure mode on the released 0.5.2 is nasty: the three layout keys are **silently ignored**, `babs init` succeeds, and you get a legacy-layout project with no error — which the harvest script then can't process.
+The configs here use the configurable BIDS-study layout from [PennLINC/babs PR #369](https://github.com/PennLINC/babs/pull/369) (`analysis_path: "."`, inputs under `sourcedata/`, RIA stores under `.babs/`). That PR is merged upstream, but the latest release (0.5.4) predates it — and the failure mode on any released babs is nasty: the three layout keys are **silently ignored**, `babs init` succeeds, and you get a legacy-layout project with no error, which the harvest script then can't process.
 
 ```bash
-micromamba create -n babs-369 -f environment_hpc.yml -y
-micromamba activate babs-369
+micromamba create -n babs -f environment_hpc.yml -y
+micromamba activate babs
 pip install git+https://github.com/PennLINC/babs.git
 ```
 
-(`environment_hpc.yml` ships in this repo; it is BABS's own HPC environment file.) The wrappers activate the `babs-369` env by name — set `BABS_ENV` if you called yours something else — and refuse to run if the active babs predates 0.5.5.
+(`environment_hpc.yml` ships in this repo; it is BABS's own HPC environment file.) The wrappers activate the `babs` env by name — set `BABS_ENV` in `.env` if you called yours something else — and refuse to run if the active babs predates 0.5.5, so a stale env fails loudly rather than building a broken project. Once a release containing the layout exists, plain `pip install babs` will do.
 
 ### 2. Cluster software
 
@@ -52,23 +52,23 @@ Each wrapper looks for its `.sif` file (e.g. `freesurfer-nidm_bidsapp.sif`) in t
 
 ### 4. A `.env` file
 
-The wrappers source `.env` from the **current working directory**, so always run them from this repo's root. A complete, real example:
+The wrappers source `.env` from the **current working directory**, so always run them from this repo's root. It is plain bash (no spaces around `=`), so `$HOME` and friends work. A template — replace `<scratch>` with your cluster's scratch/work filesystem and `<data>` with wherever the study's DataLad tree lives:
 
 ```bash
-BASE_DIR='/home/me/simple2_bidsapp_babs'
-SCRATCH_DIR_FS='/scratch/me/simple2/fs_bidsapp_babs'
-SCRATCH_DIR_ANTS='/scratch/me/simple2/ants_bidsapp_babs'
-SCRATCH_DIR_MRIQC='/scratch/me/simple2/mriqc_bidsapp_babs'
-SCRATCH_DIR_COMPUTE='/scratch/me/'
-DATALAD_SET_DIR='/data/lab/datasets/simple2_datalad'
-FS_LICENSE='/home/me/license.txt'          # FreeSurfer runs only
+BASE_DIR="$HOME/simple2_bidsapp_babs"                    # where you cloned this repo
+SCRATCH_DIR_FS="<scratch>/simple2/fs_bidsapp_babs"       # per-app run dirs + logs
+SCRATCH_DIR_ANTS="<scratch>/simple2/ants_bidsapp_babs"
+SCRATCH_DIR_MRIQC="<scratch>/simple2/mriqc_bidsapp_babs"
+SCRATCH_DIR_COMPUTE="<scratch>"                          # where SLURM jobs execute
+DATALAD_SET_DIR="<data>/simple2_datalad"                 # root of the study tree
+FS_LICENSE="$HOME/license.txt"                           # FreeSurfer runs only
 ```
-
-This is plain bash — quote the values, no spaces around `=`.
 
 ### 5. FreeSurfer license (FreeSurfer runs only)
 
 Get a free license from [the FreeSurfer site](https://surfer.nmr.mgh.harvard.edu/registration.html) and point `FS_LICENSE` at it. The wrapper fails fast at launch — not two hours later inside every job — if the variable is unset or the file is missing.
+
+The license cannot be baked into the container image: FreeSurfer licenses are personal (issued per registrant), and the images are shared, so embedding one would redistribute it to every user of the image, which the FreeSurfer license terms don't allow. Binding your own license at runtime is the intended mechanism.
 
 ### 6. Git access to datasets you don't own
 
@@ -93,11 +93,13 @@ The harvest script checks this up front and prints the exact command when it's m
 ./freesurfer-nidm_babs_script.sh Brown study-ADHD200 session
 ```
 
-Every run is stamped with `RUN_DATE` (auto-generated as `YYMMDD`, e.g. `260827`). The stamp names the scratch run directory, the compute space, the log file, and — by default — the project itself:
+Where things land:
 
-- **BABS project** (the deliverable): `<DATALAD_SET_DIR>/<study>/site-<SITE>/derivatives/babs-<app>_<RUN_DATE>`
+- **BABS project** (the deliverable): `<DATALAD_SET_DIR>/<study>/site-<SITE>/derivatives/babs-<app>` — deliberately **undated**. The project's own git history records when everything happened; a date in the folder name is redundant provenance that would have to be corrected later (and BABS projects can't be renamed after `babs init` — absolute paths are baked in). If a project already exists there, `babs init` refuses, which makes redoing a site an explicit decision rather than an accident.
 - **Scratch run dir**: `<SCRATCH_DIR_app>/<study>_<RUN_DATE>/` — config copy, container dataset
 - **Log**: `<SCRATCH_DIR_app>/babs_script_<RUN_DATE>_<timestamp>.log` — everything the run printed, survives your terminal
+
+`RUN_DATE` (auto-generated as `YYMMDD`, e.g. `260827`) stamps only these per-attempt items — the scratch run dir, compute space, log file, and SLURM job — never the deliverable.
 
 ### Knobs
 
@@ -105,12 +107,12 @@ All optional, all environment variables:
 
 | Variable | What it does |
 |---|---|
-| `RUN_DATE=260827` | Pin the date stamp instead of auto-generating it. |
-| `BABS_OUTPUT_DIR=/path` | Put the project at a fixed, undated path (e.g. the canonical `derivatives/babs-freesurfer-nidm` a site publishes). Wins over the dated default; the scratch/log/job names keep their date stamp. Must be decided before `babs init` — babs bakes absolute paths into the project, so it cannot be renamed afterwards. |
+| `RUN_DATE=260827` | Pin the per-attempt date stamp instead of auto-generating it. |
+| `BABS_OUTPUT_DIR=/path` | Put the project somewhere other than the default `derivatives/babs-<app>` — e.g. for a deliberate second run of a site whose project already exists. Must be decided before `babs init`; the project cannot be renamed afterwards. |
 | `BABS_SKIP_CHECK_SETUP=1` | **Currently required for every run.** `babs check-setup` crashes on the PR #369 study layout (it hardcodes a `inputs/data` path that no longer exists). The wrapper prints a reminder when it skips. |
 | `BABS_SUBMIT_COUNT=N` | Submit only the first N jobs — a controlled ramp for when an app's memory/time needs are unverified. Measure the first completions, adjust the config, then `babs submit` the rest into the same project. |
 | `BABS_LIST_SUB_FILE=/path.csv` | Restrict the project to the subjects in a CSV (single `sub_id` column). For pilots and re-runs. |
-| `BABS_ENV=name` | Micromamba env holding babs (default `babs-369`). |
+| `BABS_ENV=name` | Micromamba env holding babs (default `babs`). |
 | `BABS_NIDM_DERIV=name` | Which NIDM derivative under `derivatives/` to augment (default `nidm_4.5.0`). |
 
 ## While the jobs run
@@ -118,8 +120,8 @@ All optional, all environment variables:
 Check on things from the project directory:
 
 ```bash
-micromamba activate babs-369
-cd <DATALAD_SET_DIR>/<study>/site-<SITE>/derivatives/babs-<app>_<date>
+micromamba activate babs
+cd <DATALAD_SET_DIR>/<study>/site-<SITE>/derivatives/babs-<app>
 babs status
 ```
 
@@ -141,8 +143,8 @@ Repeat if the resubmitted round itself loses jobs to preemption.
 **The harvest script lives in the dataset, not in this repo** — `<DATALAD_SET_DIR>/<study>/site-<SITE>/code/post_babs.sh` — and that's deliberate: it's per-site, it's owned by the data manager, and two divergent copies of it is how a study ends up half-harvested.
 
 ```bash
-micromamba activate babs-369
-<site>/code/post_babs.sh <site>/derivatives/babs-<app>_<date>
+micromamba activate babs
+<site>/code/post_babs.sh <site>/derivatives/babs-<app>
 ```
 
 It merges the per-job result branches, syncs the local checkout with the output RIA, fetches and unzips the result zips (one `sub-<id>/` per subject), drops the now-redundant zip content, and commits the site dataset's updated submodule pointer. It is safe to re-run: an interrupted harvest resumes, and an already-harvested project is detected rather than re-fetched.
@@ -154,14 +156,7 @@ Failure modes it already handles — the reason not to reimplement it:
 - **Local and RIA histories diverge routinely** (saving `code/` after submission). The script fast-forwards when possible and auto-replays local commits only when they're confined to `code/`, leaving a timestamped backup ref either way.
 - **Incremental harvests work.** Already-extracted subjects are detected by directory, so a re-run after a second batch of jobs extracts only the new subjects instead of re-fetching tens of GB.
 
-### Merging the per-subject NIDM TTLs
-
-Also the dataset's job, for the same anti-divergence reason. Any implementation has to satisfy two constraints, both measured against a real harvested project:
-
-1. **Match the per-subject layout.** The apps write `sub-<id>[/ses-<x>]/nidm.ttl` directly. A glob expecting an intermediate directory (e.g. `sub-*/nidm_output/nidm.ttl`) finds zero files and writes a near-empty merge without erroring.
-2. **Exclude the non-result subtrees.** A bare recursive search for `nidm.ttl` also sweeps in `sourcedata/NIDM/` (the *input* records the apps appended to) and any leftover `merge_ds/`, silently doubling graphs. Skip `sourcedata`, `merge_ds`, `.babs`, `.git`, `.datalad`, `containers`, `code`, `inputs`.
-
-A known-good implementation is preserved in this repo's history: `git show 342b960:merge_ttl_files.py`.
+There is deliberately **no merged-TTL step**: the deliverable is the per-subject `sub-<id>/nidm.ttl` files, which downstream tools query as a group. Nothing consumes a concatenated `nidm_merge.ttl`, so none is produced.
 
 ## Per-app configuration
 
