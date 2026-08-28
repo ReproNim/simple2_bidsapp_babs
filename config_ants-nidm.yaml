@@ -61,19 +61,19 @@ cluster_resources:
     # new BRANCH and no collision. Expect some jobs to need resubmission; that is
     # the trade for the extra nodes.
     #
-    # cpus/mem: PILOT VALUES, to be re-sized from measured MaxRSS/Elapsed once a
-    # subject completes (no correct ANTs run has finished through BABS yet). 16
-    # threads because joint label fusion registers 20 atlases; 48G because ITK
-    # allocates per-thread buffers and the earlier 32G was sized for 8 threads.
-    # time: 12:00:00 retained -- the partition now allows up to 2 days, but the
-    # one completed (if wrongly-masked) run took 1h23m, so 12h is already ample
-    # and a shorter request schedules sooner.
+    # cpus/mem/time: sized from the first gate-passing run (aug27c pilot,
+    # job 21427403_1, sub-0051456): Elapsed 1:25:12, MaxRSS 17.9 GB at 16
+    # threads. 32G is ~1.8x measured headroom (JLF memory tracks brain-mask
+    # size, which varies by subject); 04:00:00 is ~2.8x measured and
+    # schedules much sooner than the old 12h request. The wrongly-masked
+    # aug26/aug27 runs needed 25.5 GB because they fused over whole-head
+    # masks; a correct mask needs less.
     customized_text: |
         #SBATCH --partition=mit_preemptable
         #SBATCH --no-requeue
         #SBATCH --cpus-per-task=16
-        #SBATCH --mem=48G
-        #SBATCH --time=12:00:00
+        #SBATCH --mem=32G
+        #SBATCH --time=04:00:00
         #SBATCH --job-name=ants-nidm_bidsapp_${RUN_DATE}
 # Necessary commands to be run first. This runs on the COMPUTE side
 # (participant_job.sh), which only needs datalad/git-annex/apptainer -- not the
