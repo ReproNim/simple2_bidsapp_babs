@@ -12,7 +12,11 @@
 #   Multi-session dataset:   ./ants-nidm_babs_script.sh Brown study-ADHD200 session
 #
 # Optional environment variable:
-#   RUN_DATE=YYMMDD - Use specific date instead of auto-generated
+#   RUN_DATE=YYMMDD          - Use specific date instead of auto-generated
+#   ANTS_SIF_FILENAME=<file> - Use a specific container image
+#   BABS_OUTPUT_DIR=<path>   - Place the project at an explicit path, which
+#                              is required when a project already exists for
+#                              this site (babs init refuses to overwrite)
 
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -27,7 +31,12 @@ APP_NAME="ants-nidm"
 SCRATCH_DIR="$SCRATCH_DIR_ANTS"
 CONTAINER_DS_NAME="ants-nidm_bidsapp-container"
 CONTAINER_NAME="ants-nidm-bidsapp-0-1-0"
-SIF_FILENAME="ants-nidm_bidsapp.sif"
+# The default is the canonical CPU-ANTs image that produced the delivered
+# Caltech derivative. Registration has since moved to FireANTs on CUDA, so a
+# corrected run must pass its own image explicitly, e.g.
+#   ANTS_SIF_FILENAME=ants-nidm_bidsapp_fireants_sep25.sif
+# Keeping the default unchanged means nothing silently switches engines.
+SIF_FILENAME="${ANTS_SIF_FILENAME:-ants-nidm_bidsapp.sif}"
 SIF_ALT_PATHS=(
     "/orcd/home/002/yibei/simple2_bidsapp_babs"
     "/home/yibei/simple2_bidsapp_babs"
