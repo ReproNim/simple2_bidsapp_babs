@@ -77,9 +77,16 @@ cluster_resources:
     # masks; a correct mask needs less.
     #
     # --gres=gpu:1 (added 2026-09-25): registration moved to FireANTs on CUDA,
-    # so a GPU is now required. mit_preemptable carries 21 GPU nodes (15x
-    # h100:4, 2x h100:8, 3x h200:4, 1x rtx_pro_6000:4), so this stays on the
-    # same partition and keeps the --no-requeue reasoning above intact.
+    # so a GPU is now required. mit_preemptable carries 222 GPU nodes (l40s,
+    # h100, h200, a100, rtx_pro_6000 and a40, counted from
+    # `sinfo -p mit_preemptable -h -o "%G %D"`), so this stays on the same
+    # partition and the --no-requeue reasoning above is untouched. A first
+    # submission was allocated gres/gpu:l40s:1, which the default
+    # --fireants-batch-size of 5 fits.
+    #
+    # An earlier revision of this comment said 21 nodes. That was wrong: the
+    # count came from a `sinfo | head -5`, so it summed only the first few
+    # rows. Corrected 2026-09-25 after re-counting the full table.
     #
     # mem raised 32G -> 48G: 48G is what the tier-2 GPU smoke test is known to
     # complete on, and the 32G figure was measured on the CPU ANTs pipeline
