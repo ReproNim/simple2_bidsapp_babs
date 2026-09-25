@@ -28,6 +28,13 @@ bids_app_args:
     # NIDM is picked up automatically from <bids_dir>/../NIDM, i.e. the mounted
     # sourcedata/NIDM input dataset. No flag needed.
 singularity_args:
+    # --nv is MANDATORY, not tuning. Every registration in the app is FireANTs
+    # on CUDA, and the app raises DeviceUnavailable at construction when no GPU
+    # is visible -- deliberately, with no CPU fallback. Without --nv the GPU is
+    # invisible inside the container and every job in the array fails
+    # identically. Pairs with --gres=gpu:1 in cluster_resources below; either
+    # one alone is useless.
+    - --nv
     - --userns
     - --no-home
     - --writable-tmpfs
@@ -68,11 +75,23 @@ cluster_resources:
     # schedules much sooner than the old 12h request. The wrongly-masked
     # aug26/aug27 runs needed 25.5 GB because they fused over whole-head
     # masks; a correct mask needs less.
+    #
+    # --gres=gpu:1 (added 2026-09-25): registration moved to FireANTs on CUDA,
+    # so a GPU is now required. mit_preemptable carries 21 GPU nodes (15x
+    # h100:4, 2x h100:8, 3x h200:4, 1x rtx_pro_6000:4), so this stays on the
+    # same partition and keeps the --no-requeue reasoning above intact.
+    #
+    # mem raised 32G -> 48G: 48G is what the tier-2 GPU smoke test is known to
+    # complete on, and the 32G figure was measured on the CPU ANTs pipeline
+    # that no longer runs. Host RAM is separate from VRAM; the default
+    # --fireants-batch-size of 5 peaks near 20 GB of VRAM, which any of these
+    # cards holds.
     customized_text: |
         #SBATCH --partition=mit_preemptable
         #SBATCH --no-requeue
+        #SBATCH --gres=gpu:1
         #SBATCH --cpus-per-task=16
-        #SBATCH --mem=32G
+        #SBATCH --mem=48G
         #SBATCH --time=04:00:00
         #SBATCH --job-name=ants-nidm_bidsapp_${RUN_DATE}
 # Necessary commands to be run first. This runs on the COMPUTE side
