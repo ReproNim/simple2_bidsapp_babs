@@ -182,7 +182,7 @@ Two separate things carry a NIDM version, and they must agree:
 - **The input records.** Each site's `derivatives/nidm_<version>` folder holds the per-subject `nidm.ttl` files the apps augment, written by the PyNIDM release named in the folder. `BABS_NIDM_DERIV` selects the folder; it changes only when someone regenerates the inputs.
 - **The PyNIDM inside each container.** All three apps pin `pynidm==4.5.0` in their own repositories. This is the PyNIDM that reads and writes NIDM during a job. A PyNIDM installed in your host env has no effect on BABS runs.
 
-Moving to a new PyNIDM release (e.g. 5.0.0) therefore means: regenerate each site's inputs into `derivatives/nidm_5.0.0`, bump the pin in the three app repositories and rebuild their images, then set `BABS_NIDM_DERIV=nidm_5.0.0` (and update the default in `babs_common.sh`). Don't feed records from one PyNIDM version to containers built with another.
+Moving to a new PyNIDM release (e.g. 5.0.0) therefore means: regenerate each site's inputs into `derivatives/nidm_5.0.0`, update the three app repositories and rebuild their images, then set `BABS_NIDM_DERIV=nidm_5.0.0` (and update the default in `babs_common.sh`). Don't feed records from one PyNIDM version to containers built with another. For 5.0 specifically, MRIQC (which only calls `csv2nidm`) should need just the pin change, but the ANTs and FreeSurfer converters (`ants_seg_to_nidm`, `segstats_jsonld`) import `nidm.core` and `nidm.experiment`, which 5.0 removes, so they need a code port first.
 
 ## Adding a new BIDS App
 
