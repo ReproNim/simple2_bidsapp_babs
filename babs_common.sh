@@ -8,6 +8,42 @@ if [ -f ".env" ]; then
 fi
 
 # Initialize run date - auto-generate YYMMDD or use RUN_DATE env var if set
+# Resolve an app image version: one X.Y.Z names the image file, the container
+# and the zip suffix, so a run cannot label one version's outputs with
+# another's number. Sets ZIP_VERSION (dots as dashes).
+# Usage: babs_resolve_version <VAR_NAME> <version>
+babs_resolve_version() {
+    local var_name="$1" version="$2"
+    if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo "ERROR: ${var_name} must be X.Y.Z, got '${version}'" >&2
+        exit 1
+    fi
+    ZIP_VERSION="${version//./-}"
+}
+
+# A config left in RUN_DIR by an earlier attempt with the same RUN_DATE is
+# reused as-is (babs_prepare_yaml_config skips an existing file), so check it
+# zips under this run's version.
+# Usage: babs_check_zip_version <config_path> <VAR_NAME>
+babs_check_zip_version() {
+    local config_path="$1" var_name="$2"
+    if ! grep -q "\"${ZIP_VERSION}\"" "$config_path"; then
+        echo "ERROR: ${config_path} does not zip as ${ZIP_VERSION}; it was made for another ${var_name}. Remove it or use a new RUN_DATE." >&2
+        exit 1
+    fi
+}
+
+# Log the commit an image was built from (its org.opencontainers.image.revision
+# label), so the run log records which source ran. Images built before the
+# label existed report "unknown"; that is logged, not treated as an error.
+# Usage: babs_log_image_revision <image_path>
+babs_log_image_revision() {
+    local image="$1" rev
+    rev=$(apptainer inspect --labels "$image" 2>/dev/null \
+        | awk '$1 == "org.opencontainers.image.revision:" {print $2}')
+    echo "Image revision: ${rev:-unknown} ($(basename "$image"))"
+}
+
 babs_init_run_date() {
     if [ -z "${RUN_DATE:-}" ]; then
         RUN_DATE=$(date +%y%m%d)
@@ -110,6 +146,7 @@ babs_setup_container() {
        [ -f "${PWD}/${container_ds_name}/.datalad/config" ] && \
        grep -q "${container_name}" "${PWD}/${container_ds_name}/.datalad/config" 2>/dev/null; then
         echo "Container already set up, skipping container setup steps."
+        babs_log_image_revision "${PWD}/${container_ds_name}/.datalad/environments/${container_name}/image"
         return 0
     fi
 
@@ -132,11 +169,13 @@ babs_setup_container() {
             done
 
             if [ ! -f "${PWD}/${sif_filename}" ]; then
-                echo "ERROR: ${sif_filename} not found in BASE_DIR or SIF_SEARCH_DIRS. Build it, or choose another existing image (e.g. ANTS_VERSION for ANTs)." >&2
+                echo "ERROR: ${sif_filename} not found in BASE_DIR or SIF_SEARCH_DIRS. Build it, or choose another existing version (ANTS_VERSION, FS_VERSION, MRIQC_VERSION)." >&2
                 exit 1
             fi
         fi
     fi
+
+    babs_log_image_revision "${PWD}/${sif_filename}"
 
     # Create the container dataset if it doesn't exist
     if [ ! -d "${PWD}/${container_ds_name}" ]; then
