@@ -43,9 +43,11 @@ singularity_args:
 # NOT substituted by babs_prepare_yaml_config (only vars passed to it are); it
 # survives into the rendered participant_job.sh where bash defines ${subid} at
 # runtime, so each job zips its own subject folder:
-# sub-<id>_sub-<id>-0-2-0.zip.
+# sub-<id>_sub-<id>-<version>.zip, e.g. sub-<id>_sub-<id>-0-2-0.zip.
+# The version IS substituted (ZIP_VERSION, which the wrapper derives from
+# ANTS_VERSION), so the zip name always matches the image that ran.
 zip_foldernames:
-    ${subid}: "0-2-0"
+    ${subid}: "${ZIP_VERSION}"
 # How much cluster resources it needs:
 cluster_resources:
     interpreting_shell: "/bin/bash"

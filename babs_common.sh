@@ -132,7 +132,7 @@ babs_setup_container() {
             done
 
             if [ ! -f "${PWD}/${sif_filename}" ]; then
-                echo "ERROR: ${sif_filename} not found in BASE_DIR or SIF_SEARCH_DIRS. Build it, or name an existing image (e.g. ANTS_SIF_FILENAME)." >&2
+                echo "ERROR: ${sif_filename} not found in BASE_DIR or SIF_SEARCH_DIRS. Build it, or choose another existing image (e.g. ANTS_VERSION for ANTs)." >&2
                 exit 1
             fi
         fi
