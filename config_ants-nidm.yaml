@@ -43,9 +43,9 @@ singularity_args:
 # NOT substituted by babs_prepare_yaml_config (only vars passed to it are); it
 # survives into the rendered participant_job.sh where bash defines ${subid} at
 # runtime, so each job zips its own subject folder:
-# sub-<id>_sub-<id>-0-1-0.zip.
+# sub-<id>_sub-<id>-0-2-0.zip.
 zip_foldernames:
-    ${subid}: "0-1-0"
+    ${subid}: "0-2-0"
 # How much cluster resources it needs:
 cluster_resources:
     interpreting_shell: "/bin/bash"
@@ -123,3 +123,6 @@ alert_log_messages:
         - "Segmentation failed"
         - "Error in NIDM conversion"
         - "Required file not found"
+    stderr:
+        # No visible GPU: --nv or --gres=gpu:1 missing, or a faulty GPU node.
+        - "DeviceUnavailable"
