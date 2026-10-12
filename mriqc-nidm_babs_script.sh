@@ -28,10 +28,7 @@ SCRATCH_DIR="$SCRATCH_DIR_MRIQC"
 CONTAINER_DS_NAME="mriqc-nidm_bidsapp-container"
 CONTAINER_NAME="mriqc-nidm-bidsapp-0-1-0"
 SIF_FILENAME="mriqc-nidm_bidsapp.sif"
-SIF_ALT_PATHS=(
-    "/orcd/home/002/yibei/simple2_bidsapp_babs"
-    "/home/yibei/simple2_bidsapp_babs"
-)
+SIF_ALT_PATHS=()   # searched after BASE_DIR; add more via SIF_SEARCH_DIRS in .env
 
 # ============================================================================
 # Parse arguments

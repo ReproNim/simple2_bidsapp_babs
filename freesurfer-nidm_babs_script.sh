@@ -28,12 +28,7 @@ SCRATCH_DIR="$SCRATCH_DIR_FS"
 CONTAINER_DS_NAME="freesurfer-nidm_bidsapp-container"
 CONTAINER_NAME="freesurfer-nidm-bidsapp-0-1-0"
 SIF_FILENAME="freesurfer-nidm_bidsapp.sif"
-SIF_ALT_PATHS=(
-    "/orcd/home/002/yibei/simple2_bidsapp_babs"
-    "/home/yibei/simple2_bidsapp_babs"
-    "/orcd/home/002/yibei/freesurfer_bidsapp"
-    "/home/yibei/freesurfer_bidsapp"
-)
+SIF_ALT_PATHS=()   # searched after BASE_DIR; add more via SIF_SEARCH_DIRS in .env
 
 # ============================================================================
 # Parse arguments

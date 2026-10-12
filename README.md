@@ -37,10 +37,13 @@ The configs here use the configurable BIDS-study layout from [PennLINC/babs PR #
 ```bash
 micromamba create -n babs -f environment_hpc.yml -y
 micromamba activate babs
-pip install git+https://github.com/PennLINC/babs.git
+pip install "babs @ git+https://github.com/PennLINC/babs.git@ea5d6f0"
+babs --version    # expect: babs v0.5.5.dev32+gea5d6f023
 ```
 
-(`environment_hpc.yml` ships in this repo; it is BABS's own HPC environment file.) The wrappers activate the `babs` env by name — set `BABS_ENV` in `.env` if you called yours something else — and refuse to run if the active babs predates 0.5.5, so a stale env fails loudly rather than building a broken project. Once a release containing the layout exists, plain `pip install babs` will do.
+There is no 0.5.5 release, tag or branch to look for. babs derives its version from git tags, so an install from `main` reports the next release as a dev version, `0.5.5.devN+g<sha>`. `ea5d6f0` is the commit these scripts were last run against; later `main` should also work but is untested here.
+
+(`environment_hpc.yml` ships in this repo; it is BABS's own HPC environment file.) The wrappers activate the `babs` env by name — set `BABS_ENV` in `.env` if you called yours something else — and refuse to run if the active babs predates 0.5.5, so a stale env fails loudly rather than building a broken project. Do not bypass that check. If it reports 0.5.4 after the install above, the install went into a different env from the one the wrappers activate: activate `$BABS_ENV` and reinstall with `--force-reinstall`. Once a release containing the layout exists, plain `pip install babs` will do.
 
 ### 2. Cluster software
 
@@ -48,11 +51,11 @@ Apptainer (or Singularity) for running the containers, and `git-annex` — the w
 
 ### 3. The container image
 
-Each wrapper looks for its `.sif` file (e.g. `freesurfer-nidm_bidsapp.sif`) in this repo's directory first, then in a short list of fallback paths. Build the image from the matching app repository (each has a `Singularity` recipe and a `setup.py` helper) and drop it next to the scripts. The expected filenames are set at the top of each wrapper script.
+Each wrapper looks for its `.sif` file (e.g. `freesurfer-nidm_bidsapp.sif`) by exact filename in `BASE_DIR`, then in `SIF_SEARCH_DIRS` (see `.env` below); a missing image stops the run. Build the image from the matching app repository (each has a `Singularity` recipe and a `setup.py` helper) and drop it next to the scripts. The expected filenames are set at the top of each wrapper script.
 
 ### 4. A `.env` file
 
-The wrappers source `.env` from the **current working directory**, so always run them from this repo's root. It is plain bash (no spaces around `=`), so `$HOME` and friends work. A template — replace `<scratch>` with your cluster's scratch/work filesystem and `<data>` with wherever the study's DataLad tree lives:
+The wrappers source `.env` from the **current working directory**, so always run them from this repo's root. It is plain bash (no spaces around `=`), so `$HOME` and friends work. A template — replace `<scratch>` with your cluster's scratch/work filesystem and `<data>` with wherever the study's DataLad tree lives. Container images are looked up by exact filename in `BASE_DIR`, then in `SIF_SEARCH_DIRS`; a missing image stops the run:
 
 ```bash
 BASE_DIR="$HOME/simple2_bidsapp_babs"                    # where you cloned this repo
@@ -62,6 +65,7 @@ SCRATCH_DIR_MRIQC="<scratch>/simple2/mriqc_bidsapp_babs"
 SCRATCH_DIR_COMPUTE="<scratch>"                          # where SLURM jobs execute
 DATALAD_SET_DIR="<data>/simple2_datalad"                 # root of the study tree
 FS_LICENSE="$HOME/license.txt"                           # FreeSurfer runs only
+SIF_SEARCH_DIRS=""                                       # optional: more dirs holding .sif images, space-separated
 ```
 
 ### 5. FreeSurfer license (FreeSurfer runs only)
@@ -111,9 +115,9 @@ All optional, all environment variables:
 | `BABS_OUTPUT_DIR=/path` | Put the project somewhere other than the default `derivatives/babs-<app>` — e.g. for a deliberate second run of a site whose project already exists. Must be decided before `babs init`; the project cannot be renamed afterwards. |
 | `BABS_SKIP_CHECK_SETUP=1` | **Currently required for every run.** `babs check-setup` crashes on the PR #369 study layout (it hardcodes a `inputs/data` path that no longer exists). The wrapper prints a reminder when it skips. |
 | `BABS_SUBMIT_COUNT=N` | Submit only the first N jobs — a controlled ramp for when an app's memory/time needs are unverified. Measure the first completions, adjust the config, then `babs submit` the rest into the same project. |
-| `BABS_LIST_SUB_FILE=/path.csv` | Restrict the project to the subjects in a CSV (single `sub_id` column). For pilots and re-runs. |
+| `BABS_LIST_SUB_FILE=/path.csv` | Restrict the project to the subjects in a CSV — `sub_id` column, plus `ses_id` for session-level projects. For pilots and re-runs, and **effectively required for any site where some subjects/sessions lack the required modality**: babs does *not* apply the config's `required_files` when it builds the inclusion list ([babs#314](https://github.com/PennLINC/babs/issues/314)), so without a pre-computed list every `sub-*/ses-*` directory becomes a job, including ones with no T1w that can only fail. Build the list by globbing the raw dataset (e.g. keep pairs matching `anat/*_T1w.nii*`). |
 | `BABS_ENV=name` | Micromamba env holding babs (default `babs`). |
-| `BABS_NIDM_DERIV=name` | Which NIDM derivative under `derivatives/` to augment (default `nidm_4.5.0`). |
+| `BABS_NIDM_DERIV=name` | Which NIDM derivative under `derivatives/` to augment (default `nidm_4.5.0`). This names an existing input folder, `site-<SITE>/derivatives/<name>`; it does not follow the PyNIDM installed on the host, which the BABS jobs never use. See [NIDM versions](#nidm-versions). |
 
 ## While the jobs run
 
@@ -129,7 +133,9 @@ Two SLURM realities to know about:
 
 **Preemption is expected.** The configs use `mit_preemptable` (591 nodes, 2-day ceiling) rather than `mit_normal` (50 nodes, 12 h) — more throughput, occasional casualties. Every config also sets `#SBATCH --no-requeue`, and must: the partition requeues preempted jobs under the *same* SLURM id, the job then recomputes the same branch name, and its `mkdir` fails. `--no-requeue` turns preemption into a clean failure that can simply be resubmitted. (Of the 38 Caltech FreeSurfer jobs, 4 were preempted; all completed on resubmission.)
 
-**Resubmission only works after the queue drains.** `babs submit` refuses to run — "There are still jobs running" — while *any* of the project's jobs are pending or running. So when a preemption notice arrives mid-run, there is nothing to do yet. Wait for the whole array to finish, then run one batch round:
+**Never `babs submit` while any earlier task is still PENDING.** Each array task discovers *which subject/session it is* only when it starts, by reading its row of the shared `code/job_submit.csv` — and every `babs submit` call rewrites that file with just its own rows ([babs#408](https://github.com/PennLINC/babs/issues/408)). A pending task from an earlier array will then silently run the wrong pair (observed: a duplicate of another job, while its own pair was never processed). Newer babs offers `--select` and `--skip-running-jobs`, which make mid-run submission *possible* — but they do not protect pending tasks' identity, so the safe rule stays: submit in rounds, only when nothing of this project is pending. Tasks already RUNNING are safe (they have read their row). If a duplicate slips through, `scancel` it before it finishes (branches push at job end) and resubmit the orphaned pair later.
+
+So when a preemption notice arrives mid-run, there is nothing to do yet. Wait for the whole array to finish, then run one batch round:
 
 ```bash
 babs status     # refreshes the job table, marks the failures
@@ -164,11 +170,20 @@ Each app's YAML config sets its SLURM resources, verified against real runs:
 
 | Config | Resources | Notes |
 |---|---|---|
-| `config_freesurfer-nidm.yaml` | 8 CPUs, 24 GB, 3.5 h | needs `FS_LICENSE`; jobs measured ~2–3 h, ~29 GB peak |
-| `config_ants-nidm.yaml` | 8 CPUs, 32 GB, 18 h | joint label fusion dominates the time |
-| `config_mriqc-nidm.yaml` | 12 CPUs, 18 GB, 25 min | |
+| `config_freesurfer-nidm.yaml` | 8 CPUs, 32 GB, 6 h | needs `FS_LICENSE`; measured 2.5–3.5 h; peak ~29 GB (Caltech, 1 T1w) up to ~31.3 GB (ONRC_2, 5 T1w runs) — sites with many T1w runs per session sit close to the 32 GB ceiling |
+| `config_ants-nidm.yaml` | 16 CPUs, 48 GB, 4 h, 1 GPU | registration is FireANTs on CUDA, so a GPU is required (`--gres=gpu:1` plus `--nv`); the app fails at start without one. The wrapper runs `ants-nidm_bidsapp-0.2.0.sif` (outputs zipped as `0-2-0`) and stops if that image is missing; `ANTS_VERSION=X.Y.Z` selects `ants-nidm_bidsapp-X.Y.Z.sif` and sets the container name and zip version to match, so reproducing the 0.1.0 Caltech run means providing that image as `ants-nidm_bidsapp-0.1.0.sif` and setting `ANTS_VERSION=0.1.0` |
+| `config_mriqc-nidm.yaml` | 12 CPUs, 20 GB, 30 min | measured ~4–5 min and ~10.4 GB peak (Caltech); the allocation must stay above MRIQC's own `--mem 16G` |
 
 The wrappers substitute the environment-specific values (paths, license, session flag) into a copy of the config at launch; the copy lands in the scratch run directory so every run records exactly what it used.
+
+### NIDM versions
+
+Two separate things carry a NIDM version, and they must agree:
+
+- **The input records.** Each site's `derivatives/nidm_<version>` folder holds the per-subject `nidm.ttl` files the apps augment, written by the PyNIDM release named in the folder. `BABS_NIDM_DERIV` selects the folder; it changes only when someone regenerates the inputs.
+- **The PyNIDM inside each container.** All three apps pin `pynidm==4.5.0` in their own repositories. This is the PyNIDM that reads and writes NIDM during a job. A PyNIDM installed in your host env has no effect on BABS runs.
+
+Moving to a new PyNIDM release (e.g. 5.0.0) therefore means: regenerate each site's inputs into `derivatives/nidm_5.0.0`, update the three app repositories and rebuild their images, then set `BABS_NIDM_DERIV=nidm_5.0.0` (and update the default in `babs_common.sh`). Don't feed records from one PyNIDM version to containers built with another. For 5.0 specifically, MRIQC (which only calls `csv2nidm`) should need just the pin change, but the ANTs and FreeSurfer converters (`ants_seg_to_nidm`, `segstats_jsonld`) import `nidm.core` and `nidm.experiment`, which 5.0 removes, so they need a code port first.
 
 ## Adding a new BIDS App
 

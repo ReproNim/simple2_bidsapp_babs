@@ -97,6 +97,13 @@ babs_setup_container() {
     local sif_filename="$4"       # e.g., "ants-nidm_bidsapp.sif"
     shift 4
     local sif_alt_paths=("$@")    # Alternative paths to search for SIF file
+    # Exact filename only: an earlier fallback copied any <app>*.sif it found,
+    # which could silently run a superseded image under the requested name.
+    # Extra directories to search come from SIF_SEARCH_DIRS in .env
+    # (space-separated), so no machine paths live in the scripts.
+    local extra_dirs=()
+    read -ra extra_dirs <<< "${SIF_SEARCH_DIRS:-}"
+    sif_alt_paths+=("${extra_dirs[@]}")
 
     # Check if container setup is already done
     if [ -d "${PWD}/${container_ds_name}" ] && \
@@ -124,22 +131,8 @@ babs_setup_container() {
                 fi
             done
 
-            # If still not found, try with different SIF naming patterns
             if [ ! -f "${PWD}/${sif_filename}" ]; then
-                for alt_path in "${sif_alt_paths[@]}"; do
-                    # Check for files matching the app name pattern without date
-                    for sif_file in "${alt_path}"/${app_name}*.sif; do
-                        if [ -f "$sif_file" ]; then
-                            echo "Copying $(basename "$sif_file") from ${alt_path} as ${sif_filename}"
-                            cp "$sif_file" "./${sif_filename}"
-                            break 2
-                        fi
-                    done
-                done
-            fi
-
-            if [ ! -f "${PWD}/${sif_filename}" ]; then
-                echo "ERROR: Cannot find container file. Please ensure ${sif_filename} exists in BASE_DIR or specified paths."
+                echo "ERROR: ${sif_filename} not found in BASE_DIR or SIF_SEARCH_DIRS. Build it, or choose another existing image (e.g. ANTS_VERSION for ANTs)." >&2
                 exit 1
             fi
         fi

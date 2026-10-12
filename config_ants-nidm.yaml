@@ -28,6 +28,13 @@ bids_app_args:
     # NIDM is picked up automatically from <bids_dir>/../NIDM, i.e. the mounted
     # sourcedata/NIDM input dataset. No flag needed.
 singularity_args:
+    # --nv is MANDATORY, not tuning. Every registration in the app is FireANTs
+    # on CUDA, and the app raises DeviceUnavailable at construction when no GPU
+    # is visible -- deliberately, with no CPU fallback. Without --nv the GPU is
+    # invisible inside the container and every job in the array fails
+    # identically. Pairs with --gres=gpu:1 in cluster_resources below; either
+    # one alone is useless.
+    - --nv
     - --userns
     - --no-home
     - --writable-tmpfs
@@ -36,9 +43,11 @@ singularity_args:
 # NOT substituted by babs_prepare_yaml_config (only vars passed to it are); it
 # survives into the rendered participant_job.sh where bash defines ${subid} at
 # runtime, so each job zips its own subject folder:
-# sub-<id>_sub-<id>-0-1-0.zip.
+# sub-<id>_sub-<id>-<version>.zip, e.g. sub-<id>_sub-<id>-0-2-0.zip.
+# The version IS substituted (ZIP_VERSION, which the wrapper derives from
+# ANTS_VERSION), so the zip name always matches the image that ran.
 zip_foldernames:
-    ${subid}: "0-1-0"
+    ${subid}: "${ZIP_VERSION}"
 # How much cluster resources it needs:
 cluster_resources:
     interpreting_shell: "/bin/bash"
@@ -68,11 +77,30 @@ cluster_resources:
     # schedules much sooner than the old 12h request. The wrongly-masked
     # aug26/aug27 runs needed 25.5 GB because they fused over whole-head
     # masks; a correct mask needs less.
+    #
+    # --gres=gpu:1 (added 2026-09-25): registration moved to FireANTs on CUDA,
+    # so a GPU is now required. mit_preemptable carries 222 GPU nodes (l40s,
+    # h100, h200, a100, rtx_pro_6000 and a40, counted from
+    # `sinfo -p mit_preemptable -h -o "%G %D"`), so this stays on the same
+    # partition and the --no-requeue reasoning above is untouched. A first
+    # submission was allocated gres/gpu:l40s:1, which the default
+    # --fireants-batch-size of 5 fits.
+    #
+    # An earlier revision of this comment said 21 nodes. That was wrong: the
+    # count came from a `sinfo | head -5`, so it summed only the first few
+    # rows. Corrected 2026-09-25 after re-counting the full table.
+    #
+    # mem raised 32G -> 48G: 48G is what the tier-2 GPU smoke test is known to
+    # complete on, and the 32G figure was measured on the CPU ANTs pipeline
+    # that no longer runs. Host RAM is separate from VRAM; the default
+    # --fireants-batch-size of 5 peaks near 20 GB of VRAM, which any of these
+    # cards holds.
     customized_text: |
         #SBATCH --partition=mit_preemptable
         #SBATCH --no-requeue
+        #SBATCH --gres=gpu:1
         #SBATCH --cpus-per-task=16
-        #SBATCH --mem=32G
+        #SBATCH --mem=48G
         #SBATCH --time=04:00:00
         #SBATCH --job-name=ants-nidm_bidsapp_${RUN_DATE}
 # Necessary commands to be run first. This runs on the COMPUTE side
@@ -97,3 +125,6 @@ alert_log_messages:
         - "Segmentation failed"
         - "Error in NIDM conversion"
         - "Required file not found"
+    stderr:
+        # No visible GPU: --nv or --gres=gpu:1 missing, or a faulty GPU node.
+        - "DeviceUnavailable"
