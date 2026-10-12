@@ -13,6 +13,8 @@
 #
 # Optional environment variable:
 #   RUN_DATE=YYMMDD - Use specific date instead of auto-generated
+#   FS_VERSION=X.Y.Z - Run freesurfer-nidm_bidsapp-X.Y.Z.sif (default 0.1.0);
+#                         also sets the container name and zip version
 
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,8 +28,12 @@ source "${SCRIPT_DIR}/babs_common.sh"
 APP_NAME="freesurfer-nidm"
 SCRATCH_DIR="$SCRATCH_DIR_FS"
 CONTAINER_DS_NAME="freesurfer-nidm_bidsapp-container"
-CONTAINER_NAME="freesurfer-nidm-bidsapp-0-1-0"
-SIF_FILENAME="freesurfer-nidm_bidsapp.sif"
+# One variable names the image, the container and the zip version, so a run
+# cannot label one version's outputs with another's number.
+FS_VERSION="${FS_VERSION:-0.1.0}"
+babs_resolve_version FS_VERSION "$FS_VERSION"
+CONTAINER_NAME="freesurfer-nidm-bidsapp-${ZIP_VERSION}"
+SIF_FILENAME="freesurfer-nidm_bidsapp-${FS_VERSION}.sif"
 SIF_ALT_PATHS=()   # searched after BASE_DIR; add more via SIF_SEARCH_DIRS in .env
 
 # ============================================================================
@@ -98,7 +104,10 @@ babs_prepare_yaml_config \
     "NIDM_ORIGIN=${NIDM_ORIGIN}" \
     "COMPUTE_SPACE=${COMPUTE_DIR}" \
     "RUN_DATE=${RUN_DATE}" \
-    "FS_LICENSE=${FS_LICENSE}"
+    "FS_LICENSE=${FS_LICENSE}" \
+    "ZIP_VERSION=${ZIP_VERSION}"
+
+babs_check_zip_version "$CONFIG_PATH" FS_VERSION
 
 babs_configure_session_selection "$CONFIG_PATH" "$PROCESSING_LEVEL" || exit 1
 

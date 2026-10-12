@@ -51,7 +51,17 @@ Apptainer (or Singularity) for running the containers, and `git-annex` — the w
 
 ### 3. The container image
 
-Each wrapper looks for its `.sif` file (e.g. `freesurfer-nidm_bidsapp.sif`) by exact filename in `BASE_DIR`, then in `SIF_SEARCH_DIRS` (see `.env` below); a missing image stops the run. Build the image from the matching app repository (each has a `Singularity` recipe and a `setup.py` helper) and drop it next to the scripts. The expected filenames are set at the top of each wrapper script.
+Images are named by version: `<app>_bidsapp-X.Y.Z.sif`, e.g. `freesurfer-nidm_bidsapp-0.1.0.sif`. Each wrapper looks for its image by exact filename in `BASE_DIR`, then in `SIF_SEARCH_DIRS` (see `.env` below); a missing image stops the run. Build the image from the matching app repository (each has a `Singularity` recipe and a `setup.py` helper) and drop it next to the scripts.
+
+One variable per app picks the version, and with it the image file, the container name and the zip suffix, so outputs are always labelled with the version that produced them:
+
+| wrapper | variable | default |
+|---|---|---|
+| `ants-nidm_babs_script.sh` | `ANTS_VERSION` | `0.2.0` |
+| `freesurfer-nidm_babs_script.sh` | `FS_VERSION` | `0.1.0` |
+| `mriqc-nidm_babs_script.sh` | `MRIQC_VERSION` | `0.1.0` |
+
+When an app's outputs change, bump its version in the app repository, build the image under the new name, and change the default here; never rebuild an image under an existing version's name. An image built from the app's own build commands also records its source commit (the `org.opencontainers.image.revision` label), which the wrapper writes to the run log as `Image revision: ...`; older images log `unknown`.
 
 ### 4. A `.env` file
 

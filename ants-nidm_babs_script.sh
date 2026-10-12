@@ -40,11 +40,7 @@ CONTAINER_DS_NAME="ants-nidm_bidsapp-container"
 # One variable names the image, the container and the zip version, so a run
 # cannot label one version's outputs with another's number.
 ANTS_VERSION="${ANTS_VERSION:-0.2.0}"
-if [[ ! "$ANTS_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    echo "ERROR: ANTS_VERSION must be X.Y.Z, got '${ANTS_VERSION}'" >&2
-    exit 1
-fi
-ZIP_VERSION="${ANTS_VERSION//./-}"
+babs_resolve_version ANTS_VERSION "$ANTS_VERSION"
 CONTAINER_NAME="ants-nidm-bidsapp-${ZIP_VERSION}"
 SIF_FILENAME="ants-nidm_bidsapp-${ANTS_VERSION}.sif"
 SIF_ALT_PATHS=()   # searched after BASE_DIR; add more via SIF_SEARCH_DIRS in .env
@@ -115,12 +111,7 @@ babs_prepare_yaml_config \
     "RUN_DATE=${RUN_DATE}" \
     "ZIP_VERSION=${ZIP_VERSION}"
 
-# A config left in RUN_DIR by an earlier attempt with the same RUN_DATE is
-# reused as-is, so check it carries this run's zip version.
-if ! grep -q "\"${ZIP_VERSION}\"" "$CONFIG_PATH"; then
-    echo "ERROR: ${CONFIG_PATH} does not zip as ${ZIP_VERSION}; it was made for another ANTS_VERSION. Remove it or use a new RUN_DATE." >&2
-    exit 1
-fi
+babs_check_zip_version "$CONFIG_PATH" ANTS_VERSION
 
 babs_configure_session_selection "$CONFIG_PATH" "$PROCESSING_LEVEL" || exit 1
 

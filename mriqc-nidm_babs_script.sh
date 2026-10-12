@@ -13,6 +13,8 @@
 #
 # Optional environment variable:
 #   RUN_DATE=YYMMDD - Use specific date instead of auto-generated
+#   MRIQC_VERSION=X.Y.Z - Run mriqc-nidm_bidsapp-X.Y.Z.sif (default 0.1.0);
+#                         also sets the container name and zip version
 
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,8 +28,12 @@ source "${SCRIPT_DIR}/babs_common.sh"
 APP_NAME="mriqc-nidm"
 SCRATCH_DIR="$SCRATCH_DIR_MRIQC"
 CONTAINER_DS_NAME="mriqc-nidm_bidsapp-container"
-CONTAINER_NAME="mriqc-nidm-bidsapp-0-1-0"
-SIF_FILENAME="mriqc-nidm_bidsapp.sif"
+# One variable names the image, the container and the zip version, so a run
+# cannot label one version's outputs with another's number.
+MRIQC_VERSION="${MRIQC_VERSION:-0.1.0}"
+babs_resolve_version MRIQC_VERSION "$MRIQC_VERSION"
+CONTAINER_NAME="mriqc-nidm-bidsapp-${ZIP_VERSION}"
+SIF_FILENAME="mriqc-nidm_bidsapp-${MRIQC_VERSION}.sif"
 SIF_ALT_PATHS=()   # searched after BASE_DIR; add more via SIF_SEARCH_DIRS in .env
 
 # ============================================================================
@@ -93,7 +99,10 @@ babs_prepare_yaml_config \
     "BIDS_ORIGIN=${BIDS_ORIGIN}" \
     "NIDM_ORIGIN=${NIDM_ORIGIN}" \
     "COMPUTE_SPACE=${COMPUTE_DIR}" \
-    "RUN_DATE=${RUN_DATE}"
+    "RUN_DATE=${RUN_DATE}" \
+    "ZIP_VERSION=${ZIP_VERSION}"
+
+babs_check_zip_version "$CONFIG_PATH" MRIQC_VERSION
 
 babs_configure_session_selection "$CONFIG_PATH" "$PROCESSING_LEVEL" || exit 1
 
