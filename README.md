@@ -55,7 +55,7 @@ Each wrapper looks for its `.sif` file (e.g. `freesurfer-nidm_bidsapp.sif`) in t
 
 ### 4. A `.env` file
 
-The wrappers source `.env` from the **current working directory**, so always run them from this repo's root. It is plain bash (no spaces around `=`), so `$HOME` and friends work. A template — replace `<scratch>` with your cluster's scratch/work filesystem and `<data>` with wherever the study's DataLad tree lives:
+The wrappers source `.env` from the **current working directory**, so always run them from this repo's root. It is plain bash (no spaces around `=`), so `$HOME` and friends work. A template — replace `<scratch>` with your cluster's scratch/work filesystem and `<data>` with wherever the study's DataLad tree lives. Container images are looked up by exact filename in `BASE_DIR`, then in `SIF_SEARCH_DIRS`; a missing image stops the run:
 
 ```bash
 BASE_DIR="$HOME/simple2_bidsapp_babs"                    # where you cloned this repo
@@ -65,6 +65,7 @@ SCRATCH_DIR_MRIQC="<scratch>/simple2/mriqc_bidsapp_babs"
 SCRATCH_DIR_COMPUTE="<scratch>"                          # where SLURM jobs execute
 DATALAD_SET_DIR="<data>/simple2_datalad"                 # root of the study tree
 FS_LICENSE="$HOME/license.txt"                           # FreeSurfer runs only
+SIF_SEARCH_DIRS=""                                       # optional: more dirs holding .sif images, space-separated
 ```
 
 ### 5. FreeSurfer license (FreeSurfer runs only)

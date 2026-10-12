@@ -37,12 +37,7 @@ CONTAINER_NAME="ants-nidm-bidsapp-0-2-0"
 # The 0.1.0 image (ants-nidm_bidsapp.sif) produced the Caltech derivative that
 # 0.2.0 replaces; pass it explicitly only to reproduce that run.
 SIF_FILENAME="${ANTS_SIF_FILENAME:-ants-nidm_bidsapp-0.2.0.sif}"
-SIF_ALT_PATHS=(
-    "/orcd/home/002/yibei/simple2_bidsapp_babs"
-    "/home/yibei/simple2_bidsapp_babs"
-    "/orcd/home/002/yibei/ants_bidsapp"
-    "/home/yibei/ants_bidsapp"
-)
+SIF_ALT_PATHS=()   # searched after BASE_DIR; add more via SIF_SEARCH_DIRS in .env
 
 # ============================================================================
 # Parse arguments
@@ -79,16 +74,6 @@ echo "Current directory: $PWD"
 # ============================================================================
 # Set up container
 # ============================================================================
-# babs_setup_container falls back to any ${APP_NAME}*.sif when the named image
-# is missing, which could silently pick the 0.1.0 image. Require the named one.
-sif_found=false
-for d in "$PWD" "$BASE_DIR" "${SIF_ALT_PATHS[@]}"; do
-    [ -f "${d}/${SIF_FILENAME}" ] && sif_found=true
-done
-if [ "$sif_found" != true ]; then
-    echo "ERROR: ${SIF_FILENAME} not found in BASE_DIR or SIF_ALT_PATHS; build it or set ANTS_SIF_FILENAME" >&2
-    exit 1
-fi
 babs_setup_container \
     "$APP_NAME" \
     "$CONTAINER_DS_NAME" \
