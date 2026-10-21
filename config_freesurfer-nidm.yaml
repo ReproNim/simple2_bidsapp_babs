@@ -91,3 +91,6 @@ alert_log_messages:
         - "FreeSurfer failed"
         - "recon-all: error"
         - "NIDM conversion failed"
+    stderr:
+        # NIDM input is an annexed file that was never `datalad get`-ed.
+        - "no content behind it"

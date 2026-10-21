@@ -128,3 +128,5 @@ alert_log_messages:
     stderr:
         # No visible GPU: --nv or --gres=gpu:1 missing, or a faulty GPU node.
         - "DeviceUnavailable"
+        # NIDM input is an annexed file that was never `datalad get`-ed.
+        - "no content behind it"
