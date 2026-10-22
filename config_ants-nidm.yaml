@@ -116,7 +116,11 @@ job_compute_space: "${COMPUTE_SPACE}"
 required_files:
     "$INPUT_DATASET_#1":
         - "anat/*_T1w.nii*"
-# Alert messages that might be found in log files of failed jobs:
+# Messages the app writes when a job fails, for reading a failed job's logs.
+# The BABS version these scripts pin (ea5d6f0) does not read this block, and
+# babs status judges a job by its scheduler state and whether results were
+# saved. The apps log to stderr, which BABS writes to logs/<job>.e<id>,
+# separate from stdout (.o<id>).
 alert_log_messages:
     stdout:
         - "ERROR:"
@@ -128,3 +132,5 @@ alert_log_messages:
     stderr:
         # No visible GPU: --nv or --gres=gpu:1 missing, or a faulty GPU node.
         - "DeviceUnavailable"
+        # NIDM input is an annexed file that was never `datalad get`-ed.
+        - "no content behind it"
