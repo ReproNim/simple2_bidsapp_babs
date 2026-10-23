@@ -13,7 +13,7 @@
 #
 # Optional environment variable:
 #   RUN_DATE=YYMMDD          - Use specific date instead of auto-generated
-#   ANTS_VERSION=X.Y.Z       - Run ants-nidm_bidsapp-X.Y.Z.sif (default 0.2.1);
+#   ANTS_VERSION=X.Y.Z       - Run ants-nidm_bidsapp-X.Y.Z.sif (default 0.2.2);
 #                              also sets the container name and zip version
 #   BABS_OUTPUT_DIR=<path>   - Place the project at an explicit path, which
 #                              is required when a project already exists for
@@ -35,15 +35,19 @@ CONTAINER_DS_NAME="ants-nidm_bidsapp-container"
 # per-method NIDM label names, T1w choice when a session has several.
 # 0.2.1: atlas files readable by every account (the 0.2.0 SIF works only for
 # the account that built it), --skip-ants records the T1w the existing
-# segmentation used. Build it from the ants-nidm_bidsapp v0.2.1 tag with
-# scripts/build_sif.sbatch under this name.
+# segmentation used.
+# 0.2.2: a NIDM input that was never fetched (a git-annex symlink with no
+# content) fails the job, and a subject with no NIDM input is warned about;
+# the image's org.opencontainers.image.version label is the app version.
+# Build it from the ants-nidm_bidsapp v0.2.2 tag with scripts/build_sif.sbatch
+# under this name.
 # Older images reproduce older runs: the Caltech babs-ants-nidm-0-2-0
 # derivative came from ants-nidm_bidsapp-0.2.0.sif (ANTS_VERSION=0.2.0), and
 # the 0.1.0 derivative it replaced from ants-nidm_bidsapp-0.1.0.sif
 # (ANTS_VERSION=0.1.0).
 # One variable names the image, the container and the zip version, so a run
 # cannot label one version's outputs with another's number.
-ANTS_VERSION="${ANTS_VERSION:-0.2.1}"
+ANTS_VERSION="${ANTS_VERSION:-0.2.2}"
 babs_resolve_version ANTS_VERSION "$ANTS_VERSION"
 CONTAINER_NAME="ants-nidm-bidsapp-${ZIP_VERSION}"
 SIF_FILENAME="ants-nidm_bidsapp-${ANTS_VERSION}.sif"
