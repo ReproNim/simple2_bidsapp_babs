@@ -13,7 +13,7 @@
 #
 # Optional environment variable:
 #   RUN_DATE=YYMMDD - Use specific date instead of auto-generated
-#   FS_VERSION=X.Y.Z - Run freesurfer-nidm_bidsapp-X.Y.Z.sif (default 0.1.1);
+#   FS_VERSION=X.Y.Z - Run freesurfer-nidm_bidsapp-X.Y.Z.sif (default 0.1.2);
 #                         also sets the container name and zip version
 
 # Get the directory where this script is located
@@ -30,7 +30,7 @@ SCRATCH_DIR="$SCRATCH_DIR_FS"
 CONTAINER_DS_NAME="freesurfer-nidm_bidsapp-container"
 # One variable names the image, the container and the zip version, so a run
 # cannot label one version's outputs with another's number.
-FS_VERSION="${FS_VERSION:-0.1.1}"
+FS_VERSION="${FS_VERSION:-0.1.2}"
 babs_resolve_version FS_VERSION "$FS_VERSION"
 CONTAINER_NAME="freesurfer-nidm-bidsapp-${ZIP_VERSION}"
 SIF_FILENAME="freesurfer-nidm_bidsapp-${FS_VERSION}.sif"
