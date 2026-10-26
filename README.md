@@ -59,7 +59,7 @@ One variable per app picks the version, and with it the image file, the containe
 |---|---|---|
 | `ants-nidm_babs_script.sh` | `ANTS_VERSION` | `0.2.2` |
 | `freesurfer-nidm_babs_script.sh` | `FS_VERSION` | `0.1.2` |
-| `mriqc-nidm_babs_script.sh` | `MRIQC_VERSION` | `0.1.2` |
+| `mriqc-nidm_babs_script.sh` | `MRIQC_VERSION` | `0.1.3` |
 
 When an app's outputs change, bump its version in the app repository, build the image under the new name, and change the default here; never rebuild an image under an existing version's name. An image built from the app's own build commands also records its source commit (the `org.opencontainers.image.revision` label), which the wrapper writes to the run log as `Image revision: ...`; older images log `unknown`.
 
