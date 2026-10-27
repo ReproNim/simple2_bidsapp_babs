@@ -15,6 +15,10 @@
 #   RUN_DATE=YYMMDD - Use specific date instead of auto-generated
 #   MRIQC_VERSION=X.Y.Z - Run mriqc-nidm_bidsapp-X.Y.Z.sif (default 0.1.3);
 #                         also sets the container name and zip version
+#   MRIQC_MAX_VOXEL_SIZE=MM - Pass --max-voxel-size MM (mriqc-nidm 0.1.3+):
+#                         leave T1w/T2w images with a voxel dimension above
+#                         MM out of MRIQC. Unset (default): every image is
+#                         rated. ABIDE II UCLA_Long needs 2.
 
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -105,6 +109,17 @@ babs_prepare_yaml_config \
 babs_check_zip_version "$CONFIG_PATH" MRIQC_VERSION
 
 babs_configure_session_selection "$CONFIG_PATH" "$PROCESSING_LEVEL" || exit 1
+
+if [ -n "${MRIQC_MAX_VOXEL_SIZE:-}" ]; then
+    if ! [[ "$MRIQC_MAX_VOXEL_SIZE" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+        echo "ERROR: MRIQC_MAX_VOXEL_SIZE must be a number of mm, got '$MRIQC_MAX_VOXEL_SIZE'" >&2
+        exit 1
+    fi
+    sed -i \
+        "/^[[:space:]]*\\\$SUBJECT_SELECTION_FLAG:/a\\    --max-voxel-size: \"${MRIQC_MAX_VOXEL_SIZE}\"" \
+        "$CONFIG_PATH"
+    echo "MRIQC max voxel size: ${MRIQC_MAX_VOXEL_SIZE} mm"
+fi
 
 echo "BIDS origin URL: $BIDS_ORIGIN"
 echo "NIDM origin URL: $NIDM_ORIGIN"
