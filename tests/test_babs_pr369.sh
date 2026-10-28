@@ -45,4 +45,29 @@ for template in "$REPO_ROOT"/config_*-nidm.yaml; do
     test "$(grep -c '^[[:space:]]*\$SESSION_SELECTION_FLAG: "--session-label"$' "$config_path")" -eq 1
 done
 
+# --max-voxel-size: a reused config must end up with exactly the current
+# setting, never a stale one from an earlier run.
+config_path="$TEST_TMPDIR/config_mriqc-nidm.yaml"
+count_voxel_lines() { grep -c '^[[:space:]]*--max-voxel-size:' "$config_path" || true; }
+babs_configure_max_voxel_size "$config_path" 2 0.1.3
+test "$(grep -c '^    --max-voxel-size: "2"$' "$config_path")" -eq 1
+babs_configure_max_voxel_size "$config_path" 3 0.1.3
+test "$(count_voxel_lines)" -eq 1
+grep -q '^    --max-voxel-size: "3"$' "$config_path"
+babs_configure_max_voxel_size "$config_path" "" 0.1.3
+test "$(count_voxel_lines)" -eq 0
+for bad in 0 00 0.0 -1 2mm abc; do
+    if babs_configure_max_voxel_size "$config_path" "$bad" 0.1.3 2>/dev/null; then
+        echo "MRIQC_MAX_VOXEL_SIZE='$bad' was accepted" >&2
+        exit 1
+    fi
+done
+if babs_configure_max_voxel_size "$config_path" 2 0.1.2 2>/dev/null; then
+    echo "--max-voxel-size was accepted for mriqc-nidm 0.1.2" >&2
+    exit 1
+fi
+babs_configure_max_voxel_size "$config_path" 1.5 0.1.10
+grep -q '^    --max-voxel-size: "1.5"$' "$config_path"
+test "$(count_voxel_lines)" -eq 1
+
 echo "BABS PR #369 configuration checks passed"

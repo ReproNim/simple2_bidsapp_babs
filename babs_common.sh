@@ -266,6 +266,45 @@ babs_configure_session_selection() {
     fi
 }
 
+# Pass mriqc-nidm's --max-voxel-size through bids_app_args.
+# Usage: babs_configure_max_voxel_size <config_path> <mm or empty> <mriqc_version>
+# An empty value leaves every image rated. The option exists from mriqc-nidm
+# 0.1.3; older images forward it to MRIQC, which rejects it in every job.
+babs_configure_max_voxel_size() {
+    local config_path="$1"
+    local max_voxel_size="$2"
+    local mriqc_version="$3"
+    local min="0.1.3"
+
+    if [ ! -f "$config_path" ]; then
+        echo "ERROR: Config file not found: $config_path" >&2
+        return 1
+    fi
+
+    # A reused config may carry a limit from an earlier run (RUN_DIR has no
+    # site in it), and YAML keeps the last of two duplicate keys.
+    sed -i '/^[[:space:]]*--max-voxel-size:/d' "$config_path"
+
+    [ -n "$max_voxel_size" ] || return 0
+
+    if ! [[ "$max_voxel_size" =~ ^[0-9]+([.][0-9]+)?$ ]] \
+        || [[ "$max_voxel_size" =~ ^0+([.]0+)?$ ]]; then
+        echo "ERROR: MRIQC_MAX_VOXEL_SIZE must be a positive number of mm, got '$max_voxel_size'" >&2
+        return 1
+    fi
+    if [ "$(printf '%s\n%s\n' "$min" "$mriqc_version" | sort -V | head -1)" != "$min" ]; then
+        echo "ERROR: MRIQC_MAX_VOXEL_SIZE needs mriqc-nidm ${min} or later, got ${mriqc_version}" >&2
+        return 1
+    fi
+    if ! grep -q '^[[:space:]]*\$SUBJECT_SELECTION_FLAG:' "$config_path"; then
+        echo "ERROR: \$SUBJECT_SELECTION_FLAG not found in $config_path" >&2
+        return 1
+    fi
+    sed -i \
+        "/^[[:space:]]*\\\$SUBJECT_SELECTION_FLAG:/a\\    --max-voxel-size: \"${max_voxel_size}\"" \
+        "$config_path"
+}
+
 # Resolve the NIDM input dataset for a dataset/site.
 # Usage: babs_nidm_origin <dataset_name> <site_name>
 babs_nidm_origin() {

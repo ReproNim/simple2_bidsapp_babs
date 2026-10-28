@@ -110,15 +110,11 @@ babs_check_zip_version "$CONFIG_PATH" MRIQC_VERSION
 
 babs_configure_session_selection "$CONFIG_PATH" "$PROCESSING_LEVEL" || exit 1
 
+babs_configure_max_voxel_size "$CONFIG_PATH" "${MRIQC_MAX_VOXEL_SIZE:-}" "$MRIQC_VERSION" || exit 1
 if [ -n "${MRIQC_MAX_VOXEL_SIZE:-}" ]; then
-    if ! [[ "$MRIQC_MAX_VOXEL_SIZE" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
-        echo "ERROR: MRIQC_MAX_VOXEL_SIZE must be a number of mm, got '$MRIQC_MAX_VOXEL_SIZE'" >&2
-        exit 1
-    fi
-    sed -i \
-        "/^[[:space:]]*\\\$SUBJECT_SELECTION_FLAG:/a\\    --max-voxel-size: \"${MRIQC_MAX_VOXEL_SIZE}\"" \
-        "$CONFIG_PATH"
     echo "MRIQC max voxel size: ${MRIQC_MAX_VOXEL_SIZE} mm"
+else
+    echo "MRIQC max voxel size: none (every image is rated)"
 fi
 
 echo "BIDS origin URL: $BIDS_ORIGIN"
