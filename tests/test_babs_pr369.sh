@@ -70,4 +70,12 @@ babs_configure_max_voxel_size "$config_path" 1.5 0.1.10
 grep -q '^    --max-voxel-size: "1.5"$' "$config_path"
 test "$(count_voxel_lines)" -eq 1
 
+# Without the line it inserts after, it must fail instead of dropping the limit.
+no_anchor="$TEST_TMPDIR/config_no_anchor.yaml"
+grep -v '^[[:space:]]*\$SUBJECT_SELECTION_FLAG:' "$config_path" > "$no_anchor"
+if babs_configure_max_voxel_size "$no_anchor" 2 0.1.3 2>/dev/null; then
+    echo "--max-voxel-size was accepted without \$SUBJECT_SELECTION_FLAG" >&2
+    exit 1
+fi
+
 echo "BABS PR #369 configuration checks passed"
