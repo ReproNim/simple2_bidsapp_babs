@@ -59,7 +59,9 @@ One variable per app picks the version, and with it the image file, the containe
 |---|---|---|
 | `ants-nidm_babs_script.sh` | `ANTS_VERSION` | `0.2.2` |
 | `freesurfer-nidm_babs_script.sh` | `FS_VERSION` | `0.1.2` |
-| `mriqc-nidm_babs_script.sh` | `MRIQC_VERSION` | `0.1.2` |
+| `mriqc-nidm_babs_script.sh` | `MRIQC_VERSION` | `0.1.3` |
+
+`mriqc-nidm_babs_script.sh` also reads `MRIQC_MAX_VOXEL_SIZE` (mriqc-nidm 0.1.3 or later). When set, it passes `--max-voxel-size` to the app, which then leaves T1w/T2w images with a voxel dimension above that many mm out of MRIQC, so that one image MRIQC cannot rate does not fail the session. ABIDE II UCLA_Long needs `MRIQC_MAX_VOXEL_SIZE=2` (its `acq-hires` T1w). When unset, every image is rated.
 
 When an app's outputs change, bump its version in the app repository, build the image under the new name, and change the default here; never rebuild an image under an existing version's name. An image built from the app's own build commands also records its source commit (the `org.opencontainers.image.revision` label), which the wrapper writes to the run log as `Image revision: ...`; older images log `unknown`.
 
@@ -126,6 +128,7 @@ All optional, all environment variables:
 | `BABS_SKIP_CHECK_SETUP=1` | **Currently required for every run.** `babs check-setup` crashes on the PR #369 study layout (it hardcodes a `inputs/data` path that no longer exists). The wrapper prints a reminder when it skips. |
 | `BABS_SUBMIT_COUNT=N` | Submit only the first N jobs — a controlled ramp for when an app's memory/time needs are unverified. Measure the first completions, adjust the config, then `babs submit` the rest into the same project. |
 | `BABS_LIST_SUB_FILE=/path.csv` | Restrict the project to the subjects in a CSV — `sub_id` column, plus `ses_id` for session-level projects. For pilots and re-runs, and **effectively required for any site where some subjects/sessions lack the required modality**: babs does *not* apply the config's `required_files` when it builds the inclusion list ([babs#314](https://github.com/PennLINC/babs/issues/314)), so without a pre-computed list every `sub-*/ses-*` directory becomes a job, including ones with no T1w that can only fail. Build the list by globbing the raw dataset (e.g. keep pairs matching `anat/*_T1w.nii*`). |
+| `MRIQC_MAX_VOXEL_SIZE=2` | mriqc-nidm only, 0.1.3 or later: pass `--max-voxel-size`, leaving T1w/T2w images with a voxel dimension above that many mm out of MRIQC. Must be a positive number. Unset: every image is rated. See [The container image](#3-the-container-image) for why UCLA_Long needs it. |
 | `BABS_ENV=name` | Micromamba env holding babs (default `babs`). |
 | `BABS_NIDM_DERIV=name` | Which NIDM derivative under `derivatives/` to augment (default `nidm_4.5.0`). This names an existing input folder, `site-<SITE>/derivatives/<name>`; it does not follow the PyNIDM installed on the host, which the BABS jobs never use. See [NIDM versions](#nidm-versions). |
 

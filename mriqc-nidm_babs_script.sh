@@ -13,8 +13,12 @@
 #
 # Optional environment variable:
 #   RUN_DATE=YYMMDD - Use specific date instead of auto-generated
-#   MRIQC_VERSION=X.Y.Z - Run mriqc-nidm_bidsapp-X.Y.Z.sif (default 0.1.2);
+#   MRIQC_VERSION=X.Y.Z - Run mriqc-nidm_bidsapp-X.Y.Z.sif (default 0.1.3);
 #                         also sets the container name and zip version
+#   MRIQC_MAX_VOXEL_SIZE=MM - Pass --max-voxel-size MM (mriqc-nidm 0.1.3+):
+#                         leave T1w/T2w images with a voxel dimension above
+#                         MM out of MRIQC. Unset (default): every image is
+#                         rated. ABIDE II UCLA_Long needs 2.
 
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -30,7 +34,7 @@ SCRATCH_DIR="$SCRATCH_DIR_MRIQC"
 CONTAINER_DS_NAME="mriqc-nidm_bidsapp-container"
 # One variable names the image, the container and the zip version, so a run
 # cannot label one version's outputs with another's number.
-MRIQC_VERSION="${MRIQC_VERSION:-0.1.2}"
+MRIQC_VERSION="${MRIQC_VERSION:-0.1.3}"
 babs_resolve_version MRIQC_VERSION "$MRIQC_VERSION"
 CONTAINER_NAME="mriqc-nidm-bidsapp-${ZIP_VERSION}"
 SIF_FILENAME="mriqc-nidm_bidsapp-${MRIQC_VERSION}.sif"
@@ -105,6 +109,13 @@ babs_prepare_yaml_config \
 babs_check_zip_version "$CONFIG_PATH" MRIQC_VERSION
 
 babs_configure_session_selection "$CONFIG_PATH" "$PROCESSING_LEVEL" || exit 1
+
+babs_configure_max_voxel_size "$CONFIG_PATH" "${MRIQC_MAX_VOXEL_SIZE:-}" "$MRIQC_VERSION" || exit 1
+if [ -n "${MRIQC_MAX_VOXEL_SIZE:-}" ]; then
+    echo "MRIQC max voxel size: ${MRIQC_MAX_VOXEL_SIZE} mm"
+else
+    echo "MRIQC max voxel size: none (every image is rated)"
+fi
 
 echo "BIDS origin URL: $BIDS_ORIGIN"
 echo "NIDM origin URL: $NIDM_ORIGIN"
