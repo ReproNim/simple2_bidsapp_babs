@@ -58,7 +58,7 @@ One variable per app picks the version, and with it the image file, the containe
 | wrapper | variable | default |
 |---|---|---|
 | `ants-nidm_babs_script.sh` | `ANTS_VERSION` | `0.2.2` |
-| `freesurfer-nidm_babs_script.sh` | `FS_VERSION` | `0.1.2` |
+| `freesurfer-nidm_babs_script.sh` | `FS_VERSION` | `0.1.3` |
 | `mriqc-nidm_babs_script.sh` | `MRIQC_VERSION` | `0.1.3` |
 
 `mriqc-nidm_babs_script.sh` also reads `MRIQC_MAX_VOXEL_SIZE` (mriqc-nidm 0.1.3 or later). When set, it passes `--max-voxel-size` to the app, which then leaves T1w/T2w images with a voxel dimension above that many mm out of MRIQC, so that one image MRIQC cannot rate does not fail the session. ABIDE II UCLA_Long needs `MRIQC_MAX_VOXEL_SIZE=2` (its `acq-hires` T1w). When unset, every image is rated.
