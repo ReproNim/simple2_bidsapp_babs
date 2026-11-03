@@ -58,7 +58,7 @@ One variable per app picks the version, and with it the image file, the containe
 | wrapper | variable | default |
 |---|---|---|
 | `ants-nidm_babs_script.sh` | `ANTS_VERSION` | `0.2.2` |
-| `freesurfer-nidm_babs_script.sh` | `FS_VERSION` | `0.1.2` |
+| `freesurfer-nidm_babs_script.sh` | `FS_VERSION` | `0.1.3` |
 | `mriqc-nidm_babs_script.sh` | `MRIQC_VERSION` | `0.1.3` |
 
 `mriqc-nidm_babs_script.sh` also reads `MRIQC_MAX_VOXEL_SIZE` (mriqc-nidm 0.1.3 or later). When set, it passes `--max-voxel-size` to the app, which then leaves T1w/T2w images with a voxel dimension above that many mm out of MRIQC, so that one image MRIQC cannot rate does not fail the session. ABIDE II UCLA_Long needs `MRIQC_MAX_VOXEL_SIZE=2` (its `acq-hires` T1w). When unset, every image is rated.
@@ -196,7 +196,7 @@ Two separate things carry a NIDM version, and they must agree:
 - **The input records.** Each site's `derivatives/nidm_<version>` folder holds the per-subject `nidm.ttl` files the apps augment, written by the PyNIDM release named in the folder. `BABS_NIDM_DERIV` selects the folder; it changes only when someone regenerates the inputs.
 - **The PyNIDM inside each container.** All three apps pin `pynidm==4.5.0` in their own repositories. This is the PyNIDM that reads and writes NIDM during a job. A PyNIDM installed in your host env has no effect on BABS runs.
 
-Moving to a new PyNIDM release (e.g. 5.0.0) therefore means: regenerate each site's inputs into `derivatives/nidm_5.0.0`, update the three app repositories and rebuild their images, then set `BABS_NIDM_DERIV=nidm_5.0.0` (and update the default in `babs_common.sh`). Don't feed records from one PyNIDM version to containers built with another. For 5.0 specifically, MRIQC (which only calls `csv2nidm`) should need just the pin change, but the ANTs and FreeSurfer converters (`ants_seg_to_nidm`, `segstats_jsonld`) import `nidm.core` and `nidm.experiment`, which 5.0 removes, so they need a code port first.
+Moving to a new PyNIDM release (e.g. 5.0.0) therefore means: regenerate each site's inputs into `derivatives/nidm_5.0.0`, update the three app repositories and rebuild their images, then set `BABS_NIDM_DERIV=nidm_5.0.0` (and update the default in `babs_common.sh`). Don't feed records from one PyNIDM version to containers built with another. For 5.0 specifically, MRIQC (which only calls `csv2nidm`) should need just the pin change, the FreeSurfer converter (`segstats_jsonld`) runs on both 4.x and 5 from freesurfer-nidm 0.1.3, and the ANTs converter (`ants_seg_to_nidm`) imports `nidm.core` and `nidm.experiment`, which 5.0 removes, so it needs a code port first.
 
 ## Adding a new BIDS App
 

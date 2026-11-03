@@ -13,7 +13,7 @@
 #
 # Optional environment variable:
 #   RUN_DATE=YYMMDD - Use specific date instead of auto-generated
-#   FS_VERSION=X.Y.Z - Run freesurfer-nidm_bidsapp-X.Y.Z.sif (default 0.1.2);
+#   FS_VERSION=X.Y.Z - Run freesurfer-nidm_bidsapp-X.Y.Z.sif (default 0.1.3);
 #                         also sets the container name and zip version
 
 # Get the directory where this script is located
@@ -28,9 +28,18 @@ source "${SCRIPT_DIR}/babs_common.sh"
 APP_NAME="freesurfer-nidm"
 SCRATCH_DIR="$SCRATCH_DIR_FS"
 CONTAINER_DS_NAME="freesurfer-nidm_bidsapp-container"
+# 0.1.3: the FreeSurfer measures in nidm.ttl belong to the input NIDM's subject
+# and, when the app finds the T1w images, to the T1w recon-all used.
+# 0.1.0-0.1.2 attached them to a separate agent named "freesurfer", so a query
+# joining measures to subjects misses those sites. Before pooling them with
+# 0.1.3 output, regenerate their NIDM by running the 0.1.3 image directly (not
+# through this wrapper, whose jobs start without the recon-all output) with
+# --skip-freesurfer, the site's BIDS dataset (T1w content fetched) as input,
+# --nidm-input-dir set to the site's input NIDM, and a copy of each subject's
+# harvested freesurfer/ directory at <output_dir>/sub-<id>[/ses-<x>]/freesurfer.
 # One variable names the image, the container and the zip version, so a run
 # cannot label one version's outputs with another's number.
-FS_VERSION="${FS_VERSION:-0.1.2}"
+FS_VERSION="${FS_VERSION:-0.1.3}"
 babs_resolve_version FS_VERSION "$FS_VERSION"
 CONTAINER_NAME="freesurfer-nidm-bidsapp-${ZIP_VERSION}"
 SIF_FILENAME="freesurfer-nidm_bidsapp-${FS_VERSION}.sif"
