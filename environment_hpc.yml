@@ -15,6 +15,7 @@ dependencies:
       - datalad_container >= 1.1.6
       - filelock >= 3.8.0
       - jinja2
+      - babs @ git+https://github.com/PennLINC/babs.git@main
       - nibabel
       - niworkflows
       - numpy

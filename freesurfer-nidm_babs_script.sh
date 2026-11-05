@@ -28,22 +28,13 @@ source "${SCRIPT_DIR}/babs_common.sh"
 APP_NAME="freesurfer-nidm"
 SCRATCH_DIR="$SCRATCH_DIR_FS"
 CONTAINER_DS_NAME="freesurfer-nidm_bidsapp-container"
-# 0.1.3: the FreeSurfer measures in nidm.ttl belong to the input NIDM's subject
-# and, when the app finds the T1w images, to the T1w recon-all used.
-# 0.1.0-0.1.2 attached them to a separate agent named "freesurfer", so a query
-# joining measures to subjects misses those sites. Before pooling them with
-# 0.1.3 output, regenerate their NIDM by running the 0.1.3 image directly (not
-# through this wrapper, whose jobs start without the recon-all output) with
-# --skip-freesurfer, the site's BIDS dataset (T1w content fetched) as input,
-# --nidm-input-dir set to the site's input NIDM, and a copy of each subject's
-# harvested freesurfer/ directory at <output_dir>/sub-<id>[/ses-<x>]/freesurfer.
-# One variable names the image, the container and the zip version, so a run
-# cannot label one version's outputs with another's number.
-FS_VERSION="${FS_VERSION:-0.1.3}"
-babs_resolve_version FS_VERSION "$FS_VERSION"
-CONTAINER_NAME="freesurfer-nidm-bidsapp-${ZIP_VERSION}"
-SIF_FILENAME="freesurfer-nidm_bidsapp-${FS_VERSION}.sif"
-SIF_ALT_PATHS=()   # searched after BASE_DIR; add more via SIF_SEARCH_DIRS in .env
+CONTAINER_NAME="freesurfer-nidm-bidsapp-0-1-0"
+SIF_FILENAME="freesurfer-nidm_bidsapp.sif"
+# Fallback locations to search for the .sif if it is not in BASE_DIR or the
+# current directory. Add your own here, or drop the .sif next to these scripts.
+SIF_ALT_PATHS=(
+    "$HOME/sifs"
+)
 
 # ============================================================================
 # Parse arguments
@@ -55,7 +46,7 @@ babs_init_run_date
 
 # Validate FreeSurfer license (fail fast before submitting jobs)
 if [ -z "${FS_LICENSE:-}" ]; then
-    echo "ERROR: FS_LICENSE is not set. Add 'FS_LICENSE=/path/to/license.txt' to .env" >&2
+    echo "ERROR: FS_LICENSE is not set. Add 'FS_LICENSE=$HOME/license.txt' to .env" >&2
     exit 1
 fi
 if [ ! -f "$FS_LICENSE" ]; then
@@ -112,6 +103,7 @@ babs_prepare_yaml_config \
     "BIDS_ORIGIN=${BIDS_ORIGIN}" \
     "NIDM_ORIGIN=${NIDM_ORIGIN}" \
     "COMPUTE_SPACE=${COMPUTE_DIR}" \
+    "TMPDIR_HOST=${TMPDIR_HOST}" \
     "RUN_DATE=${RUN_DATE}" \
     "FS_LICENSE=${FS_LICENSE}" \
     "ZIP_VERSION=${ZIP_VERSION}"
@@ -121,7 +113,6 @@ babs_check_zip_version "$CONFIG_PATH" FS_VERSION
 babs_configure_session_selection "$CONFIG_PATH" "$PROCESSING_LEVEL" || exit 1
 
 echo "BIDS origin URL: $BIDS_ORIGIN"
-echo "NIDM origin URL: $NIDM_ORIGIN"
 
 # ============================================================================
 # Check NIDM directory
@@ -132,6 +123,21 @@ babs_check_nidm "$DATASET_NAME" "$SITE_NAME"
 # Initialize BABS and submit
 # ============================================================================
 OUTPUT_DIR="$(babs_study_output_dir "$DATASET_NAME" "$SITE_NAME" "freesurfer-nidm")"
+
+# Ensure the parent derivatives directory exists (required by babs init)
+PARENT_DIR="$(dirname "$OUTPUT_DIR")"
+if [ ! -d "$PARENT_DIR" ]; then
+    echo "Creating parent directory: $PARENT_DIR"
+    mkdir -p "$PARENT_DIR"
+fi
+
+# Ensure a disk-backed tmpdir for Singularity. TMPDIR_HOST is defined in
+# babs_common.sh (defaults under SCRATCH_DIR_COMPUTE, override in .env) and is
+# the same value baked into the rendered config's singularity_args.
+mkdir -p "$TMPDIR_HOST"
+chmod 700 "$TMPDIR_HOST"
+# Export TMPDIR for host processes too
+export TMPDIR="$TMPDIR_HOST"
 
 babs_init_and_submit \
     "${PWD}/${CONTAINER_DS_NAME}" \

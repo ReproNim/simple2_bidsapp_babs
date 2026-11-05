@@ -31,27 +31,13 @@ source "${SCRIPT_DIR}/babs_common.sh"
 APP_NAME="ants-nidm"
 SCRATCH_DIR="$SCRATCH_DIR_ANTS"
 CONTAINER_DS_NAME="ants-nidm_bidsapp-container"
-# ants-nidm 0.2.0: registration on FireANTs (GPU), joint-fusion and BVOL fixes,
-# per-method NIDM label names, T1w choice when a session has several.
-# 0.2.1: atlas files readable by every account (the 0.2.0 SIF works only for
-# the account that built it), --skip-ants records the T1w the existing
-# segmentation used.
-# 0.2.2: a NIDM input that was never fetched (a git-annex symlink with no
-# content) fails the job, and a subject with no NIDM input is warned about;
-# the image's org.opencontainers.image.version label is the app version.
-# Build it from the ants-nidm_bidsapp v0.2.2 tag with scripts/build_sif.sbatch
-# under this name.
-# Older images reproduce older runs: the Caltech babs-ants-nidm-0-2-0
-# derivative came from ants-nidm_bidsapp-0.2.0.sif (ANTS_VERSION=0.2.0), and
-# the 0.1.0 derivative it replaced from ants-nidm_bidsapp-0.1.0.sif
-# (ANTS_VERSION=0.1.0).
-# One variable names the image, the container and the zip version, so a run
-# cannot label one version's outputs with another's number.
-ANTS_VERSION="${ANTS_VERSION:-0.2.2}"
-babs_resolve_version ANTS_VERSION "$ANTS_VERSION"
-CONTAINER_NAME="ants-nidm-bidsapp-${ZIP_VERSION}"
-SIF_FILENAME="ants-nidm_bidsapp-${ANTS_VERSION}.sif"
-SIF_ALT_PATHS=()   # searched after BASE_DIR; add more via SIF_SEARCH_DIRS in .env
+CONTAINER_NAME="ants-nidm-bidsapp-0-1-0"
+SIF_FILENAME="ants-nidm_bidsapp.sif"
+# Fallback locations to search for the .sif if it is not in BASE_DIR or the
+# current directory. Add your own here, or drop the .sif next to these scripts.
+SIF_ALT_PATHS=(
+    "$HOME/ants_bidsapp"
+)
 
 # ============================================================================
 # Parse arguments
@@ -105,6 +91,8 @@ NIDM_ORIGIN="$(babs_nidm_origin "$DATASET_NAME" "$SITE_NAME")"
 # Verify BIDS dataset exists
 if [ ! -d "$BIDS_ORIGIN" ]; then
     echo "ERROR: BIDS dataset not found at $BIDS_ORIGIN"
+    echo "       Check that SITE_NAME ($SITE_NAME) and DATASET_NAME ($DATASET_NAME) are valid for this dataset."
+    echo "       Valid sites for this dataset are listed in the corresponding *_sitepath.txt file."
     exit 1
 fi
 
@@ -116,6 +104,7 @@ babs_prepare_yaml_config \
     "BIDS_ORIGIN=${BIDS_ORIGIN}" \
     "NIDM_ORIGIN=${NIDM_ORIGIN}" \
     "COMPUTE_SPACE=${COMPUTE_DIR}" \
+    "TMPDIR_HOST=${TMPDIR_HOST}" \
     "RUN_DATE=${RUN_DATE}" \
     "ZIP_VERSION=${ZIP_VERSION}"
 
@@ -136,12 +125,28 @@ babs_check_nidm "$DATASET_NAME" "$SITE_NAME"
 # ============================================================================
 OUTPUT_DIR="$(babs_study_output_dir "$DATASET_NAME" "$SITE_NAME" "ants-nidm")"
 
+# Ensure the parent derivatives directory exists (required by babs init)
+PARENT_DIR="$(dirname "$OUTPUT_DIR")"
+if [ ! -d "$PARENT_DIR" ]; then
+    echo "Creating parent directory: $PARENT_DIR"
+    mkdir -p "$PARENT_DIR"
+fi
+
+# Ensure a disk-backed tmpdir for Singularity. TMPDIR_HOST is defined in
+# babs_common.sh (defaults under SCRATCH_DIR_COMPUTE, override in .env) and is
+# the same value baked into the rendered config's singularity_args.
+mkdir -p "$TMPDIR_HOST"
+chmod 700 "$TMPDIR_HOST"
+# Export TMPDIR for host processes too
+export TMPDIR="$TMPDIR_HOST"
+
 babs_init_and_submit \
     "${PWD}/${CONTAINER_DS_NAME}" \
     "$CONTAINER_NAME" \
     "$CONFIG_PATH" \
     "$OUTPUT_DIR" \
     "$PROCESSING_LEVEL"
+
 
 # ============================================================================
 # Print completion message

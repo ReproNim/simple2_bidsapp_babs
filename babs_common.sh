@@ -5,7 +5,23 @@
 # Source .env if it exists
 if [ -f ".env" ]; then
     source .env
+else
+    echo "ERROR: .env file not found in the current directory." >&2
+    echo "       Edit .env (a template is provided in the repo) and set the paths for your cluster." >&2
+    exit 1
 fi
+
+# Ensure the required environment variables are defined. Without them,
+# RUN_DIR collapses to a bare '/<dataset>_<date>' and `babs init` fails with
+# a cryptic "parent folder does not exist" error.
+for var in BASE_DIR SCRATCH_DIR_ANTS SCRATCH_DIR_FS SCRATCH_DIR_MRIQC \
+           SCRATCH_DIR_COMPUTE DATALAD_SET_DIR; do
+    if [ -z "${!var:-}" ]; then
+        echo "ERROR: Required environment variable '$var' is not set." >&2
+        echo "       Define it in .env (see .env.example)." >&2
+        exit 1
+    fi
+done
 
 # Initialize run date - auto-generate YYMMDD or use RUN_DATE env var if set
 # Resolve an app image version: one X.Y.Z names the image file, the container
@@ -80,6 +96,17 @@ BABS_ENV="${BABS_ENV:-babs}"
 # Override with BABS_NIDM_DERIV to point at a different NIDM release.
 BABS_NIDM_DERIV="${BABS_NIDM_DERIV:-nidm_4.5.0}"
 
+# Disk-backed scratch handed to the container as its TMPDIR/home and bound to
+# /tmp. Singularity needs a real writable filesystem here; the default
+# node-local /tmp is either tiny or absent on most HPC nodes.
+#
+# Override with TMPDIR_HOST in .env if your cluster's scratch lives elsewhere.
+# It is deliberately NOT baked into the YAML configs: those are rendered into
+# participant_job.sh and re-read on the compute side, so a personal path
+# hardcoded in a tracked file would tie the configs to one person's account.
+TMPDIR_HOST="${TMPDIR_HOST:-${SCRATCH_DIR_COMPUTE}/singularity_tmp}"
+export TMPDIR_HOST
+
 # Fail fast if the active babs cannot honour the BIDS-study layout keys the
 # configs set. This is worth a hard check rather than a README line, because the
 # failure is silent: babs 0.5.2's base.py hardcodes
@@ -95,6 +122,7 @@ BABS_NIDM_DERIV="${BABS_NIDM_DERIV:-nidm_4.5.0}"
 # actually occurs -- an env still on 0.5.2.
 babs_require_pr369() {
     local raw ver min="0.5.5"
+
     raw="$(babs --version 2>&1 | tail -1)"
     ver="$(printf '%s' "$raw" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
 
@@ -206,7 +234,7 @@ babs_prepare_yaml_config() {
     local output_path="$2"
     shift 2
 
-    if [ -f "$output_path" ]; then
+    if [ -f "$output_path" ] && [ -s "$output_path" ]; then
         echo "Config file already exists at $output_path, skipping creation"
         return 0
     fi

@@ -34,20 +34,19 @@ Three kinds of storage are involved, and they are deliberately separate:
 
 The configs here use the configurable BIDS-study layout from [PennLINC/babs PR #369](https://github.com/PennLINC/babs/pull/369) (`analysis_path: "."`, inputs under `sourcedata/`, RIA stores under `.babs/`). That PR is merged upstream, but the latest release (0.5.4) predates it — and the failure mode on any released babs is nasty: the three layout keys are **silently ignored**, `babs init` succeeds, and you get a legacy-layout project with no error, which the harvest script then can't process.
 
+`environment_hpc.yml` in this repo installs that git-main babs for you, along with DataLad, git-annex and the rest:
+
 ```bash
 micromamba create -n babs -f environment_hpc.yml -y
 micromamba activate babs
-pip install "babs @ git+https://github.com/PennLINC/babs.git@ea5d6f0"
-babs --version    # expect: babs v0.5.5.dev32+gea5d6f023
+babs --version    # must be >= 0.5.5
 ```
 
-There is no 0.5.5 release, tag or branch to look for. babs derives its version from git tags, so an install from `main` reports the next release as a dev version, `0.5.5.devN+g<sha>`. `ea5d6f0` is the commit these scripts were last run against; later `main` should also work but is untested here.
-
-(`environment_hpc.yml` ships in this repo; it is BABS's own HPC environment file.) The wrappers activate the `babs` env by name — set `BABS_ENV` in `.env` if you called yours something else — and refuse to run if the active babs predates 0.5.5, so a stale env fails loudly rather than building a broken project. Do not bypass that check. If it reports 0.5.4 after the install above, the install went into a different env from the one the wrappers activate: activate `$BABS_ENV` and reinstall with `--force-reinstall`. Once a release containing the layout exists, plain `pip install babs` will do.
+The wrappers activate the `babs` env by name — set `BABS_ENV` in `.env` if you called yours something else — and **refuse to run** if `babs` is not on PATH or predates 0.5.5, so a stale or incomplete env fails loudly rather than building a broken project. Once a release containing the layout exists, plain `pip install babs` will do.
 
 ### 2. Cluster software
 
-Apptainer (or Singularity) for running the containers, and `git-annex` — the wrappers load the `apptainer` module themselves; git-annex comes with the micromamba env. DataLad is installed by `environment_hpc.yml`.
+Apptainer (or Singularity) for running the containers, and `git-annex` — the wrappers load the `apptainer` module themselves; git-annex comes with the micromamba env. DataLad is installed by `environment_hpc.yml`. If your cluster provides SingularityPro instead, change the `module load` line in each `config_<app>-nidm.yaml`.
 
 ### 3. The container image
 
@@ -79,6 +78,10 @@ DATALAD_SET_DIR="<data>/simple2_datalad"                 # root of the study tre
 FS_LICENSE="$HOME/license.txt"                           # FreeSurfer runs only
 SIF_SEARCH_DIRS=""                                       # optional: more dirs holding .sif images, space-separated
 ```
+
+All six of `BASE_DIR`, `SCRATCH_DIR_ANTS`, `SCRATCH_DIR_FS`, `SCRATCH_DIR_MRIQC`, `SCRATCH_DIR_COMPUTE` and `DATALAD_SET_DIR` are **required** — the wrappers exit with a named error if any is missing, rather than letting `babs init` fail later with "parent folder does not exist". Define all of them even if you only intend to run one app.
+
+`.env` is **gitignored**, so it holds your paths and is not shared. That is why the paths it needs are documented here rather than shipped in it. Optional extras — `BABS_ENV`, `BABS_NIDM_DERIV`, `TMPDIR_HOST` (defaults to `${SCRATCH_DIR_COMPUTE}/singularity_tmp`) — are listed under Knobs.
 
 ### 5. FreeSurfer license (FreeSurfer runs only)
 
@@ -130,7 +133,11 @@ All optional, all environment variables:
 | `BABS_LIST_SUB_FILE=/path.csv` | Restrict the project to the subjects in a CSV — `sub_id` column, plus `ses_id` for session-level projects. For pilots and re-runs, and **effectively required for any site where some subjects/sessions lack the required modality**: babs does *not* apply the config's `required_files` when it builds the inclusion list ([babs#314](https://github.com/PennLINC/babs/issues/314)), so without a pre-computed list every `sub-*/ses-*` directory becomes a job, including ones with no T1w that can only fail. Build the list by globbing the raw dataset (e.g. keep pairs matching `anat/*_T1w.nii*`). |
 | `MRIQC_MAX_VOXEL_SIZE=2` | mriqc-nidm only, 0.1.3 or later: pass `--max-voxel-size`, leaving T1w/T2w images with a voxel dimension above that many mm out of MRIQC. Must be a positive number. Unset: every image is rated. See [The container image](#3-the-container-image) for why UCLA_Long needs it. |
 | `BABS_ENV=name` | Micromamba env holding babs (default `babs`). |
-| `BABS_NIDM_DERIV=name` | Which NIDM derivative under `derivatives/` to augment (default `nidm_4.5.0`). This names an existing input folder, `site-<SITE>/derivatives/<name>`; it does not follow the PyNIDM installed on the host, which the BABS jobs never use. See [NIDM versions](#nidm-versions). |
+| `BABS_NIDM_DERIV=name` | Which NIDM derivative under `derivatives/` to augment (default `nidm_4.5.0`). |
+| `TMPDIR_HOST=path` | Disk-backed scratch handed to the container as its `TMPDIR`/`$HOME` and bound to `/tmp` (default `${SCRATCH_DIR_COMPUTE}/singularity_tmp`). Must be a real writable filesystem, not node-local `/tmp`. |
+| `BABS_SHARED_GROUP=name` | Unix group given write access to the project (default: inherited from the parent directory; `none` opts out). |
+| `BABS_TEXT2GIT=0` | Keep `.ttl`/`.json`/`.tsv` in git-annex instead of git. Only sensible if you want the annexed, read-only behaviour. |
+| `BABS_SKIP_PR369_CHECK=1` | Skip the babs version check. Only for a deliberate dev install; the run then proceeds without verifying the study layout is supported. |
 
 ## While the jobs run
 
@@ -144,7 +151,7 @@ babs status
 
 Two SLURM realities to know about:
 
-**Preemption is expected.** The configs use `mit_preemptable` (591 nodes, 2-day ceiling) rather than `mit_normal` (50 nodes, 12 h) — more throughput, occasional casualties. Every config also sets `#SBATCH --no-requeue`, and must: the partition requeues preempted jobs under the *same* SLURM id, the job then recomputes the same branch name, and its `mkdir` fails. `--no-requeue` turns preemption into a clean failure that can simply be resubmitted. (Of the 38 Caltech FreeSurfer jobs, 4 were preempted; all completed on resubmission.)
+**Preemption may happen.** Every config sets `#SBATCH --no-requeue`, and must: on a partition with `PreemptMode=REQUEUE`, a preempted job is requeued under the *same* SLURM id, the job then recomputes the same branch name, and its `mkdir` fails against the directory the killed attempt left behind. `--no-requeue` turns preemption into a clean failure that can simply be resubmitted. It costs nothing on a partition that never preempts, which is why it is set unconditionally. (Of the 38 Caltech FreeSurfer jobs on the original MIT partition, 4 were preempted; all completed on resubmission.)
 
 **Never `babs submit` while any earlier task is still PENDING.** Each array task discovers *which subject/session it is* only when it starts, by reading its row of the shared `code/job_submit.csv` — and every `babs submit` call rewrites that file with just its own rows ([babs#408](https://github.com/PennLINC/babs/issues/408)). A pending task from an earlier array will then silently run the wrong pair (observed: a duplicate of another job, while its own pair was never processed). Newer babs offers `--select` and `--skip-running-jobs`, which make mid-run submission *possible* — but they do not protect pending tasks' identity, so the safe rule stays: submit in rounds, only when nothing of this project is pending. Tasks already RUNNING are safe (they have read their row). If a duplicate slips through, `scancel` it before it finishes (branches push at job end) and resubmit the orphaned pair later.
 
@@ -183,9 +190,12 @@ Each app's YAML config sets its SLURM resources, verified against real runs:
 
 | Config | Resources | Notes |
 |---|---|---|
+The wall-clock values are deliberately far above the measurements. On a cluster, a too-tight `--time` is not a small inconvenience — it means the job is killed mid-run and has to be resubmitted, so the ceiling is set for the slowest plausible node rather than the median one. Adjust `--partition`, `--qos` and `--account` for your site; check with `scontrol show partition <name>`.
 | `config_freesurfer-nidm.yaml` | 8 CPUs, 32 GB, 6 h | needs `FS_LICENSE`; measured 2.5–3.5 h; peak ~29 GB (Caltech, 1 T1w) up to ~31.3 GB (ONRC_2, 5 T1w runs) — sites with many T1w runs per session sit close to the 32 GB ceiling |
 | `config_ants-nidm.yaml` | 16 CPUs, 48 GB, 4 h, 1 GPU | registration is FireANTs on CUDA, so a GPU is required (`--gres=gpu:1` plus `--nv`); the app fails at start without one. The wrapper runs `ants-nidm_bidsapp-0.2.2.sif` (outputs zipped as `0-2-2`) and stops if that image is missing; `ANTS_VERSION=X.Y.Z` selects `ants-nidm_bidsapp-X.Y.Z.sif` and sets the container name and zip version to match, so reproducing the 0.1.0 Caltech run means providing that image as `ants-nidm_bidsapp-0.1.0.sif` and setting `ANTS_VERSION=0.1.0` |
 | `config_mriqc-nidm.yaml` | 12 CPUs, 20 GB, 30 min | measured ~4–5 min and ~10.4 GB peak (Caltech); the allocation must stay above MRIQC's own `--mem 16G` |
+
+Every config requests `--no-requeue`, and every config carries a long comment explaining why: on a partition with `PreemptMode=REQUEUE`, a preempted job is requeued under the *same* SLURM id, so it recomputes the same branch name and its bare `mkdir` fails. The flag is a no-op on partitions that do not preempt, so it is safe to keep regardless of which partition you target.
 
 The wrappers substitute the environment-specific values (paths, license, session flag) into a copy of the config at launch; the copy lands in the scratch run directory so every run records exactly what it used.
 
