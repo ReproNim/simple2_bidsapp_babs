@@ -37,17 +37,26 @@ singularity_args:
     - ${TMPDIR_HOST}:${TMPDIR_HOST}
     - -B
     - ${TMPDIR_HOST}:/tmp
+    # --nv is MANDATORY, not tuning. Every registration in the app is FireANTs
+    # on CUDA, and the app raises DeviceUnavailable at construction when no GPU
+    # is visible -- deliberately, with no CPU fallback. Without --nv the GPU is
+    # invisible inside the container and every job in the array fails
+    # identically. Pairs with --gres=gpu:1 in cluster_resources below; either
+    # one alone is useless.
+    - --nv
     #- --userns
-    - --no-home
+    #- --no-home
     - --writable-tmpfs
 # Output foldername(s) to be zipped. The app writes <output>/sub-<id>/... with
 # no app-name wrapper (per-subject layout, sensein/ants_bidsapp#9). ${subid} is
 # NOT substituted by babs_prepare_yaml_config (only vars passed to it are); it
 # survives into the rendered participant_job.sh where bash defines ${subid} at
 # runtime, so each job zips its own subject folder:
-# sub-<id>_sub-<id>-0-1-0.zip.
+# sub-<id>_sub-<id>-<version>.zip, e.g. sub-<id>_sub-<id>-0-2-0.zip.
+# The version IS substituted (ZIP_VERSION, which the wrapper derives from
+# ANTS_VERSION), so the zip name always matches the image that ran.
 zip_foldernames:
-    ${subid}: "0-1-0"
+    ${subid}: "${ZIP_VERSION}"
 # How much cluster resources it needs:
 cluster_resources:
     interpreting_shell: "/bin/bash"
@@ -94,7 +103,11 @@ job_compute_space: "${COMPUTE_SPACE}"
 required_files:
     "$INPUT_DATASET_#1":
         - "anat/*_T1w.nii*"
-# Alert messages that might be found in log files of failed jobs:
+# Messages the app writes when a job fails, for reading a failed job's logs.
+# The BABS version these scripts pin (ea5d6f0) does not read this block, and
+# babs status judges a job by its scheduler state and whether results were
+# saved. The apps log to stderr, which BABS writes to logs/<job>.e<id>,
+# separate from stdout (.o<id>).
 alert_log_messages:
     stdout:
         - "ERROR:"
@@ -103,3 +116,8 @@ alert_log_messages:
         - "Segmentation failed"
         - "Error in NIDM conversion"
         - "Required file not found"
+    stderr:
+        # No visible GPU: --nv or --gres=gpu:1 missing, or a faulty GPU node.
+        - "DeviceUnavailable"
+        # NIDM input is an annexed file that was never `datalad get`-ed.
+        - "no content behind it"

@@ -12,7 +12,12 @@
 #   Multi-session dataset:   ./ants-nidm_babs_script.sh Brown study-ADHD200 session
 #
 # Optional environment variable:
-#   RUN_DATE=YYMMDD - Use specific date instead of auto-generated
+#   RUN_DATE=YYMMDD          - Use specific date instead of auto-generated
+#   ANTS_VERSION=X.Y.Z       - Run ants-nidm_bidsapp-X.Y.Z.sif (default 0.2.2);
+#                              also sets the container name and zip version
+#   BABS_OUTPUT_DIR=<path>   - Place the project at an explicit path, which
+#                              is required when a project already exists for
+#                              this site (babs init refuses to overwrite)
 
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -100,7 +105,10 @@ babs_prepare_yaml_config \
     "NIDM_ORIGIN=${NIDM_ORIGIN}" \
     "COMPUTE_SPACE=${COMPUTE_DIR}" \
     "TMPDIR_HOST=${TMPDIR_HOST}" \
-    "RUN_DATE=${RUN_DATE}"
+    "RUN_DATE=${RUN_DATE}" \
+    "ZIP_VERSION=${ZIP_VERSION}"
+
+babs_check_zip_version "$CONFIG_PATH" ANTS_VERSION
 
 babs_configure_session_selection "$CONFIG_PATH" "$PROCESSING_LEVEL" || exit 1
 

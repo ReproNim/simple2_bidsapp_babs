@@ -24,6 +24,42 @@ for var in BASE_DIR SCRATCH_DIR_ANTS SCRATCH_DIR_FS SCRATCH_DIR_MRIQC \
 done
 
 # Initialize run date - auto-generate YYMMDD or use RUN_DATE env var if set
+# Resolve an app image version: one X.Y.Z names the image file, the container
+# and the zip suffix, so a run cannot label one version's outputs with
+# another's number. Sets ZIP_VERSION (dots as dashes).
+# Usage: babs_resolve_version <VAR_NAME> <version>
+babs_resolve_version() {
+    local var_name="$1" version="$2"
+    if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo "ERROR: ${var_name} must be X.Y.Z, got '${version}'" >&2
+        exit 1
+    fi
+    ZIP_VERSION="${version//./-}"
+}
+
+# A config left in RUN_DIR by an earlier attempt with the same RUN_DATE is
+# reused as-is (babs_prepare_yaml_config skips an existing file), so check it
+# zips under this run's version.
+# Usage: babs_check_zip_version <config_path> <VAR_NAME>
+babs_check_zip_version() {
+    local config_path="$1" var_name="$2"
+    if ! grep -q "\"${ZIP_VERSION}\"" "$config_path"; then
+        echo "ERROR: ${config_path} does not zip as ${ZIP_VERSION}; it was made for another ${var_name}. Remove it or use a new RUN_DATE." >&2
+        exit 1
+    fi
+}
+
+# Log the commit an image was built from (its org.opencontainers.image.revision
+# label), so the run log records which source ran. Images built before the
+# label existed report "unknown"; that is logged, not treated as an error.
+# Usage: babs_log_image_revision <image_path>
+babs_log_image_revision() {
+    local image="$1" rev
+    rev=$(apptainer inspect --labels "$image" 2>/dev/null \
+        | awk '$1 == "org.opencontainers.image.revision:" {print $2}')
+    echo "Image revision: ${rev:-unknown} ($(basename "$image"))"
+}
+
 babs_init_run_date() {
     if [ -z "${RUN_DATE:-}" ]; then
         RUN_DATE=$(date +%y%m%d)
@@ -125,12 +161,20 @@ babs_setup_container() {
     local sif_filename="$4"       # e.g., "ants-nidm_bidsapp.sif"
     shift 4
     local sif_alt_paths=("$@")    # Alternative paths to search for SIF file
+    # Exact filename only: an earlier fallback copied any <app>*.sif it found,
+    # which could silently run a superseded image under the requested name.
+    # Extra directories to search come from SIF_SEARCH_DIRS in .env
+    # (space-separated), so no machine paths live in the scripts.
+    local extra_dirs=()
+    read -ra extra_dirs <<< "${SIF_SEARCH_DIRS:-}"
+    sif_alt_paths+=("${extra_dirs[@]}")
 
     # Check if container setup is already done
     if [ -d "${PWD}/${container_ds_name}" ] && \
        [ -f "${PWD}/${container_ds_name}/.datalad/config" ] && \
        grep -q "${container_name}" "${PWD}/${container_ds_name}/.datalad/config" 2>/dev/null; then
         echo "Container already set up, skipping container setup steps."
+        babs_log_image_revision "${PWD}/${container_ds_name}/.datalad/environments/${container_name}/image"
         return 0
     fi
 
@@ -152,26 +196,14 @@ babs_setup_container() {
                 fi
             done
 
-            # If still not found, try with different SIF naming patterns
             if [ ! -f "${PWD}/${sif_filename}" ]; then
-                for alt_path in "${sif_alt_paths[@]}"; do
-                    # Check for files matching the app name pattern without date
-                    for sif_file in "${alt_path}"/${app_name}*.sif; do
-                        if [ -f "$sif_file" ]; then
-                            echo "Copying $(basename "$sif_file") from ${alt_path} as ${sif_filename}"
-                            cp "$sif_file" "./${sif_filename}"
-                            break 2
-                        fi
-                    done
-                done
-            fi
-
-            if [ ! -f "${PWD}/${sif_filename}" ]; then
-                echo "ERROR: Cannot find container file. Please ensure ${sif_filename} exists in BASE_DIR or specified paths."
+                echo "ERROR: ${sif_filename} not found in BASE_DIR or SIF_SEARCH_DIRS. Build it, or choose another existing version (ANTS_VERSION, FS_VERSION, MRIQC_VERSION)." >&2
                 exit 1
             fi
         fi
     fi
+
+    babs_log_image_revision "${PWD}/${sif_filename}"
 
     # Create the container dataset if it doesn't exist
     if [ ! -d "${PWD}/${container_ds_name}" ]; then
@@ -260,6 +292,45 @@ babs_configure_session_selection() {
             '/^[[:space:]]*\$SUBJECT_SELECTION_FLAG:/a\    $SESSION_SELECTION_FLAG: "--session-label"' \
             "$config_path"
     fi
+}
+
+# Pass mriqc-nidm's --max-voxel-size through bids_app_args.
+# Usage: babs_configure_max_voxel_size <config_path> <mm or empty> <mriqc_version>
+# An empty value leaves every image rated. The option exists from mriqc-nidm
+# 0.1.3; older images forward it to MRIQC, which rejects it in every job.
+babs_configure_max_voxel_size() {
+    local config_path="$1"
+    local max_voxel_size="$2"
+    local mriqc_version="$3"
+    local min="0.1.3"
+
+    if [ ! -f "$config_path" ]; then
+        echo "ERROR: Config file not found: $config_path" >&2
+        return 1
+    fi
+
+    # A reused config may carry a limit from an earlier run (RUN_DIR has no
+    # site in it), and YAML keeps the last of two duplicate keys.
+    sed -i '/^[[:space:]]*--max-voxel-size:/d' "$config_path"
+
+    [ -n "$max_voxel_size" ] || return 0
+
+    if ! [[ "$max_voxel_size" =~ ^[0-9]+([.][0-9]+)?$ ]] \
+        || [[ "$max_voxel_size" =~ ^0+([.]0+)?$ ]]; then
+        echo "ERROR: MRIQC_MAX_VOXEL_SIZE must be a positive number of mm, got '$max_voxel_size'" >&2
+        return 1
+    fi
+    if [ "$(printf '%s\n%s\n' "$min" "$mriqc_version" | sort -V | head -1)" != "$min" ]; then
+        echo "ERROR: MRIQC_MAX_VOXEL_SIZE needs mriqc-nidm ${min} or later, got ${mriqc_version}" >&2
+        return 1
+    fi
+    if ! grep -q '^[[:space:]]*\$SUBJECT_SELECTION_FLAG:' "$config_path"; then
+        echo "ERROR: \$SUBJECT_SELECTION_FLAG not found in $config_path" >&2
+        return 1
+    fi
+    sed -i \
+        "/^[[:space:]]*\\\$SUBJECT_SELECTION_FLAG:/a\\    --max-voxel-size: \"${max_voxel_size}\"" \
+        "$config_path"
 }
 
 # Resolve the NIDM input dataset for a dataset/site.

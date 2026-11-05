@@ -50,11 +50,23 @@ Apptainer (or Singularity) for running the containers, and `git-annex` — the w
 
 ### 3. The container image
 
-Each wrapper looks for its `.sif` file (e.g. `freesurfer-nidm_bidsapp.sif`) in this repo's directory first, then in a short list of fallback paths. Build the image from the matching app repository (each has a `Singularity` recipe and a `setup.py` helper) and drop it next to the scripts. The expected filenames are set at the top of each wrapper script.
+Images are named by version: `<app>_bidsapp-X.Y.Z.sif`, e.g. `freesurfer-nidm_bidsapp-0.1.0.sif`. Each wrapper looks for its image by exact filename in `BASE_DIR`, then in `SIF_SEARCH_DIRS` (see `.env` below); a missing image stops the run. Build the image from the matching app repository (each has a `Singularity` recipe and a `setup.py` helper) and drop it next to the scripts.
+
+One variable per app picks the version, and with it the image file, the container name and the zip suffix, so outputs are always labelled with the version that produced them:
+
+| wrapper | variable | default |
+|---|---|---|
+| `ants-nidm_babs_script.sh` | `ANTS_VERSION` | `0.2.2` |
+| `freesurfer-nidm_babs_script.sh` | `FS_VERSION` | `0.1.3` |
+| `mriqc-nidm_babs_script.sh` | `MRIQC_VERSION` | `0.1.3` |
+
+`mriqc-nidm_babs_script.sh` also reads `MRIQC_MAX_VOXEL_SIZE` (mriqc-nidm 0.1.3 or later). When set, it passes `--max-voxel-size` to the app, which then leaves T1w/T2w images with a voxel dimension above that many mm out of MRIQC, so that one image MRIQC cannot rate does not fail the session. ABIDE II UCLA_Long needs `MRIQC_MAX_VOXEL_SIZE=2` (its `acq-hires` T1w). When unset, every image is rated.
+
+When an app's outputs change, bump its version in the app repository, build the image under the new name, and change the default here; never rebuild an image under an existing version's name. An image built from the app's own build commands also records its source commit (the `org.opencontainers.image.revision` label), which the wrapper writes to the run log as `Image revision: ...`; older images log `unknown`.
 
 ### 4. A `.env` file
 
-The wrappers source `.env` from the **current working directory**, so always run them from this repo's root. It is plain bash (no spaces around `=`), so `$HOME` and friends work. A template — replace `<scratch>` with your cluster's scratch/work filesystem and `<data>` with wherever the study's DataLad tree lives:
+The wrappers source `.env` from the **current working directory**, so always run them from this repo's root. It is plain bash (no spaces around `=`), so `$HOME` and friends work. A template — replace `<scratch>` with your cluster's scratch/work filesystem and `<data>` with wherever the study's DataLad tree lives. Container images are looked up by exact filename in `BASE_DIR`, then in `SIF_SEARCH_DIRS`; a missing image stops the run:
 
 ```bash
 BASE_DIR="$HOME/simple2_bidsapp_babs"                    # where you cloned this repo
@@ -64,6 +76,7 @@ SCRATCH_DIR_MRIQC="<scratch>/simple2/mriqc_bidsapp_babs"
 SCRATCH_DIR_COMPUTE="<scratch>"                          # where SLURM jobs execute
 DATALAD_SET_DIR="<data>/simple2_datalad"                 # root of the study tree
 FS_LICENSE="$HOME/license.txt"                           # FreeSurfer runs only
+SIF_SEARCH_DIRS=""                                       # optional: more dirs holding .sif images, space-separated
 ```
 
 All six of `BASE_DIR`, `SCRATCH_DIR_ANTS`, `SCRATCH_DIR_FS`, `SCRATCH_DIR_MRIQC`, `SCRATCH_DIR_COMPUTE` and `DATALAD_SET_DIR` are **required** — the wrappers exit with a named error if any is missing, rather than letting `babs init` fail later with "parent folder does not exist". Define all of them even if you only intend to run one app.
@@ -117,7 +130,8 @@ All optional, all environment variables:
 | `BABS_OUTPUT_DIR=/path` | Put the project somewhere other than the default `derivatives/babs-<app>` — e.g. for a deliberate second run of a site whose project already exists. Must be decided before `babs init`; the project cannot be renamed afterwards. |
 | `BABS_SKIP_CHECK_SETUP=1` | **Currently required for every run.** `babs check-setup` crashes on the PR #369 study layout (it hardcodes a `inputs/data` path that no longer exists). The wrapper prints a reminder when it skips. |
 | `BABS_SUBMIT_COUNT=N` | Submit only the first N jobs — a controlled ramp for when an app's memory/time needs are unverified. Measure the first completions, adjust the config, then `babs submit` the rest into the same project. |
-| `BABS_LIST_SUB_FILE=/path.csv` | Restrict the project to the subjects in a CSV (single `sub_id` column). For pilots and re-runs. |
+| `BABS_LIST_SUB_FILE=/path.csv` | Restrict the project to the subjects in a CSV — `sub_id` column, plus `ses_id` for session-level projects. For pilots and re-runs, and **effectively required for any site where some subjects/sessions lack the required modality**: babs does *not* apply the config's `required_files` when it builds the inclusion list ([babs#314](https://github.com/PennLINC/babs/issues/314)), so without a pre-computed list every `sub-*/ses-*` directory becomes a job, including ones with no T1w that can only fail. Build the list by globbing the raw dataset (e.g. keep pairs matching `anat/*_T1w.nii*`). |
+| `MRIQC_MAX_VOXEL_SIZE=2` | mriqc-nidm only, 0.1.3 or later: pass `--max-voxel-size`, leaving T1w/T2w images with a voxel dimension above that many mm out of MRIQC. Must be a positive number. Unset: every image is rated. See [The container image](#3-the-container-image) for why UCLA_Long needs it. |
 | `BABS_ENV=name` | Micromamba env holding babs (default `babs`). |
 | `BABS_NIDM_DERIV=name` | Which NIDM derivative under `derivatives/` to augment (default `nidm_4.5.0`). |
 | `TMPDIR_HOST=path` | Disk-backed scratch handed to the container as its `TMPDIR`/`$HOME` and bound to `/tmp` (default `${SCRATCH_DIR_COMPUTE}/singularity_tmp`). Must be a real writable filesystem, not node-local `/tmp`. |
@@ -139,7 +153,9 @@ Two SLURM realities to know about:
 
 **Preemption may happen.** Every config sets `#SBATCH --no-requeue`, and must: on a partition with `PreemptMode=REQUEUE`, a preempted job is requeued under the *same* SLURM id, the job then recomputes the same branch name, and its `mkdir` fails against the directory the killed attempt left behind. `--no-requeue` turns preemption into a clean failure that can simply be resubmitted. It costs nothing on a partition that never preempts, which is why it is set unconditionally. (Of the 38 Caltech FreeSurfer jobs on the original MIT partition, 4 were preempted; all completed on resubmission.)
 
-**Resubmission only works after the queue drains.** `babs submit` refuses to run — "There are still jobs running" — while *any* of the project's jobs are pending or running. So when a preemption notice arrives mid-run, there is nothing to do yet. Wait for the whole array to finish, then run one batch round:
+**Never `babs submit` while any earlier task is still PENDING.** Each array task discovers *which subject/session it is* only when it starts, by reading its row of the shared `code/job_submit.csv` — and every `babs submit` call rewrites that file with just its own rows ([babs#408](https://github.com/PennLINC/babs/issues/408)). A pending task from an earlier array will then silently run the wrong pair (observed: a duplicate of another job, while its own pair was never processed). Newer babs offers `--select` and `--skip-running-jobs`, which make mid-run submission *possible* — but they do not protect pending tasks' identity, so the safe rule stays: submit in rounds, only when nothing of this project is pending. Tasks already RUNNING are safe (they have read their row). If a duplicate slips through, `scancel` it before it finishes (branches push at job end) and resubmit the orphaned pair later.
+
+So when a preemption notice arrives mid-run, there is nothing to do yet. Wait for the whole array to finish, then run one batch round:
 
 ```bash
 babs status     # refreshes the job table, marks the failures
@@ -174,15 +190,23 @@ Each app's YAML config sets its SLURM resources, verified against real runs:
 
 | Config | Resources | Notes |
 |---|---|---|
-| `config_freesurfer-nidm.yaml` | 8 CPUs, 32 GB, 48 h | needs `FS_LICENSE`; jobs measured ~2–3 h, ~24 GB peak. The wall-clock is a scheduling ceiling, not a runtime estimate. |
-| `config_ants-nidm.yaml` | 8 CPUs, 32 GB, 24 h | joint label fusion dominates the time; measured 1 h 25 m, 17.9 GB peak |
-| `config_mriqc-nidm.yaml` | 12 CPUs, 18 GB, 24 h | jobs measured ~5 min, 10.4 GB peak. `--mem` must stay above the app's own 16 G. |
+The wall-clock values are deliberately far above the measurements. On a cluster, a too-tight `--time` is not a small inconvenience — it means the job is killed mid-run and has to be resubmitted, so the ceiling is set for the slowest plausible node rather than the median one. Adjust `--partition`, `--qos` and `--account` for your site; check with `scontrol show partition <name>`.
+| `config_freesurfer-nidm.yaml` | 8 CPUs, 32 GB, 6 h | needs `FS_LICENSE`; measured 2.5–3.5 h; peak ~29 GB (Caltech, 1 T1w) up to ~31.3 GB (ONRC_2, 5 T1w runs) — sites with many T1w runs per session sit close to the 32 GB ceiling |
+| `config_ants-nidm.yaml` | 16 CPUs, 48 GB, 4 h, 1 GPU | registration is FireANTs on CUDA, so a GPU is required (`--gres=gpu:1` plus `--nv`); the app fails at start without one. The wrapper runs `ants-nidm_bidsapp-0.2.2.sif` (outputs zipped as `0-2-2`) and stops if that image is missing; `ANTS_VERSION=X.Y.Z` selects `ants-nidm_bidsapp-X.Y.Z.sif` and sets the container name and zip version to match, so reproducing the 0.1.0 Caltech run means providing that image as `ants-nidm_bidsapp-0.1.0.sif` and setting `ANTS_VERSION=0.1.0` |
+| `config_mriqc-nidm.yaml` | 12 CPUs, 20 GB, 30 min | measured ~4–5 min and ~10.4 GB peak (Caltech); the allocation must stay above MRIQC's own `--mem 16G` |
 
 Every config requests `--no-requeue`, and every config carries a long comment explaining why: on a partition with `PreemptMode=REQUEUE`, a preempted job is requeued under the *same* SLURM id, so it recomputes the same branch name and its bare `mkdir` fails. The flag is a no-op on partitions that do not preempt, so it is safe to keep regardless of which partition you target.
 
-The wall-clock values are deliberately far above the measurements. On a cluster, a too-tight `--time` is not a small inconvenience — it means the job is killed mid-run and has to be resubmitted, so the ceiling is set for the slowest plausible node rather than the median one. Adjust `--partition`, `--qos` and `--account` for your site; check with `scontrol show partition <name>`.
-
 The wrappers substitute the environment-specific values (paths, license, session flag) into a copy of the config at launch; the copy lands in the scratch run directory so every run records exactly what it used.
+
+### NIDM versions
+
+Two separate things carry a NIDM version, and they must agree:
+
+- **The input records.** Each site's `derivatives/nidm_<version>` folder holds the per-subject `nidm.ttl` files the apps augment, written by the PyNIDM release named in the folder. `BABS_NIDM_DERIV` selects the folder; it changes only when someone regenerates the inputs.
+- **The PyNIDM inside each container.** All three apps pin `pynidm==4.5.0` in their own repositories. This is the PyNIDM that reads and writes NIDM during a job. A PyNIDM installed in your host env has no effect on BABS runs.
+
+Moving to a new PyNIDM release (e.g. 5.0.0) therefore means: regenerate each site's inputs into `derivatives/nidm_5.0.0`, update the three app repositories and rebuild their images, then set `BABS_NIDM_DERIV=nidm_5.0.0` (and update the default in `babs_common.sh`). Don't feed records from one PyNIDM version to containers built with another. For 5.0 specifically, MRIQC (which only calls `csv2nidm`) should need just the pin change, the FreeSurfer converter (`segstats_jsonld`) runs on both 4.x and 5 from freesurfer-nidm 0.1.3, and the ANTs converter (`ants_seg_to_nidm`) imports `nidm.core` and `nidm.experiment`, which 5.0 removes, so it needs a code port first.
 
 ## Adding a new BIDS App
 

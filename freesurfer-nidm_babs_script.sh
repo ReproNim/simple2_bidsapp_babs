@@ -13,6 +13,8 @@
 #
 # Optional environment variable:
 #   RUN_DATE=YYMMDD - Use specific date instead of auto-generated
+#   FS_VERSION=X.Y.Z - Run freesurfer-nidm_bidsapp-X.Y.Z.sif (default 0.1.3);
+#                         also sets the container name and zip version
 
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -103,7 +105,10 @@ babs_prepare_yaml_config \
     "COMPUTE_SPACE=${COMPUTE_DIR}" \
     "TMPDIR_HOST=${TMPDIR_HOST}" \
     "RUN_DATE=${RUN_DATE}" \
-    "FS_LICENSE=${FS_LICENSE}"
+    "FS_LICENSE=${FS_LICENSE}" \
+    "ZIP_VERSION=${ZIP_VERSION}"
+
+babs_check_zip_version "$CONFIG_PATH" FS_VERSION
 
 babs_configure_session_selection "$CONFIG_PATH" "$PROCESSING_LEVEL" || exit 1
 
