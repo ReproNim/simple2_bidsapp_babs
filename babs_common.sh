@@ -236,8 +236,14 @@ babs_prepare_yaml_config() {
     # DATALAD_SET_DIR, FS_LICENSE, ...) while the log printed this run's.
     echo "Creating config YAML file from template..."
 
-    # Copy template to output first
-    cp "$template_path" "$output_path"
+    # Copy template to output first. Remove the old file rather than write
+    # over it: a read-only config would make cp fail and leave the old one in
+    # place, and a symlink would have cp overwrite the file it points to.
+    rm -f "$output_path"
+    if ! cp "$template_path" "$output_path"; then
+        echo "ERROR: cannot write the config ${output_path}." >&2
+        exit 1
+    fi
 
     # Perform substitutions using sed for more reliable pattern matching
     while [ $# -gt 0 ]; do
@@ -601,6 +607,17 @@ babs_validate_args() {
         babs_print_usage
         exit 1
     fi
+
+    # Both names go into paths (run dir, log file), so a "/" or a space would
+    # point them somewhere else or at nothing.
+    local name
+    for name in "$site_name" "$dataset_name"; do
+        if [[ ! "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+            echo "ERROR: site and dataset names must start with a letter or digit and hold only letters, digits, '.', '_' and '-' (got '$name')" >&2
+            babs_print_usage
+            exit 1
+        fi
+    done
 
     if [ "$processing_level" != "subject" ] && [ "$processing_level" != "session" ]; then
         echo "ERROR: processing_level must be either 'subject' or 'session' (provided: '$processing_level')" >&2
