@@ -5,7 +5,9 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TEST_TMPDIR="$(mktemp -d)"
 trap 'rm -rf "$TEST_TMPDIR"' EXIT
 
-cd "$REPO_ROOT"
+# babs_common.sh sources ./.env when there is one. Start in the temp dir so
+# the result does not depend on a .env in the repo root.
+cd "$TEST_TMPDIR"
 source "$REPO_ROOT/babs_common.sh"
 
 for template in "$REPO_ROOT"/config_*-nidm.yaml; do
@@ -102,8 +104,9 @@ if zip_check 0-2-3 "$zip_config"; then
     echo "a config zipping as 0-2-2 was accepted for ZIP_VERSION=0-2-3" >&2
     zip_failures=$((zip_failures + 1))
 fi
-# A wrapper that never resolved its version has an empty ZIP_VERSION. Every
-# config holds an empty-string value somewhere, so "" must not count as a match.
+# A wrapper that never resolved its version has an empty ZIP_VERSION. The
+# config rendered with it zips as "", and other options hold "" too, so an
+# empty version must not count as a match.
 if zip_check "" "$zip_config"; then
     echo "an empty ZIP_VERSION was accepted" >&2
     zip_failures=$((zip_failures + 1))
@@ -119,6 +122,47 @@ if zip_check 0-2-3 "$zip_config"; then
     echo "ZIP_VERSION=0-2-3 was accepted because another option holds \"0-2-3\"" >&2
     zip_failures=$((zip_failures + 1))
 fi
+# The remaining cases write the config lines directly.
+write_zip_lines() { printf '%s\n' 'bids_app_args:' '    --skip-bids-validation: ""' "$@" > "$zip_config"; }
+# A comment after the value is the same YAML.
+write_zip_lines 'zip_foldernames:' '    ${subid}: "0-2-2"  # the version that ran'
+if ! zip_check 0-2-2 "$zip_config"; then
+    echo "a zip line with a trailing comment was rejected" >&2
+    zip_failures=$((zip_failures + 1))
+fi
+# YAML keeps the last of two equal keys, so two ${subid} lines leave it open
+# which version babs zips under: neither may be accepted.
+write_zip_lines '    ${subid}: "0-2-3"' 'zip_foldernames:' '    ${subid}: "0-2-2"'
+for v in 0-2-3 0-2-2; do
+    if zip_check "$v" "$zip_config"; then
+        echo "ZIP_VERSION=$v was accepted for a config with two \${subid} lines" >&2
+        zip_failures=$((zip_failures + 1))
+    fi
+done
+# A commented-out zip line is not the zip line.
+write_zip_lines 'zip_foldernames:' '    # ${subid}: "0-2-3"' '    ${subid}: "0-2-2"'
+if zip_check 0-2-3 "$zip_config"; then
+    echo "ZIP_VERSION=0-2-3 was accepted from a commented-out zip line" >&2
+    zip_failures=$((zip_failures + 1))
+fi
+if ! zip_check 0-2-2 "$zip_config"; then
+    echo "a commented-out zip line made the live one be rejected" >&2
+    zip_failures=$((zip_failures + 1))
+fi
+# No zip line at all.
+write_zip_lines 'zip_foldernames:'
+if zip_check 0-2-2 "$zip_config"; then
+    echo "a config with no \${subid} line was accepted" >&2
+    zip_failures=$((zip_failures + 1))
+fi
+# ZIP_VERSION has to be X-Y-Z, even when the config holds the same string.
+for v in 0.2.2 0-2 0-2-2rc1; do
+    write_zip_lines 'zip_foldernames:' "    \${subid}: \"$v\""
+    if zip_check "$v" "$zip_config"; then
+        echo "ZIP_VERSION=$v, which is not X-Y-Z, was accepted" >&2
+        zip_failures=$((zip_failures + 1))
+    fi
+done
 test "$zip_failures" -eq 0
 
 echo "BABS PR #369 configuration checks passed"

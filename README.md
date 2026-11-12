@@ -216,4 +216,4 @@ bash tests/test_babs_pr369.sh         # config templating and the checks in babs
 bash tests/test_wrapper_versions.sh   # each wrapper uses one version for its image, container name and zips
 ```
 
-`test_wrapper_versions.sh` runs the three wrappers with stand-ins for `babs`, `datalad` and `apptainer` on `PATH`, in a temporary directory, so nothing is submitted and no image or dataset is read. Run both after changing a wrapper or `babs_common.sh`, and after merging `main` into a long-lived branch.
+`test_wrapper_versions.sh` runs the three wrappers with stand-ins for `babs`, `datalad` and `apptainer` on `PATH`, in a temporary directory, so nothing is submitted and no image or dataset is read. Run both after changing a wrapper, `babs_common.sh` or a config template, and after merging `main` into a long-lived branch.

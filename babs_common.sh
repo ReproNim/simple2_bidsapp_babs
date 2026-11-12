@@ -27,15 +27,24 @@ babs_resolve_version() {
 # Usage: babs_check_zip_version <config_path> <VAR_NAME>
 babs_check_zip_version() {
     local config_path="$1" var_name="$2"
-    # Without a version the search below would be for "", which every config
-    # contains (--skip-bids-validation: ""), and the check would always pass.
+    # An empty version would make this a search for "", which the config
+    # rendered with it always contains: its zip line is then ${subid}: "".
     if [[ ! "${ZIP_VERSION:-}" =~ ^[0-9]+-[0-9]+-[0-9]+$ ]]; then
-        echo "ERROR: no zip version is set for ${var_name} (ZIP_VERSION='${ZIP_VERSION:-}'). The wrapper must call babs_resolve_version before it prepares the config." >&2
+        echo "ERROR: ZIP_VERSION must be X-Y-Z, got '${ZIP_VERSION:-}'. The wrapper sets it with babs_resolve_version ${var_name} before it prepares the config." >&2
         exit 1
     fi
-    # Compare the zip line itself, not any quoted value in the config.
-    if ! grep -qE "^[[:space:]]*\\\$\{subid\}:[[:space:]]*\"${ZIP_VERSION}\"[[:space:]]*$" "$config_path"; then
-        echo "ERROR: ${config_path} does not zip as ${ZIP_VERSION}; it was made for another ${var_name}. Remove it or use a new RUN_DATE." >&2
+    # Compare the zip line itself, not any quoted value in the config. There
+    # must be exactly one: YAML keeps the last of two equal keys, so a second
+    # ${subid} line would leave open which version babs zips under.
+    local zip_lines zip_count
+    zip_lines=$(grep -E '^[[:space:]]*\$\{subid\}:' "$config_path" 2>/dev/null || true)
+    zip_count=$(printf '%s' "$zip_lines" | grep -c . || true)
+    if [ "$zip_count" -ne 1 ]; then
+        echo "ERROR: ${config_path} has ${zip_count} \${subid}: lines; expected the one under zip_foldernames. Remove it or use a new RUN_DATE." >&2
+        exit 1
+    fi
+    if ! printf '%s\n' "$zip_lines" | grep -qE "^[[:space:]]*\\\$\{subid\}:[[:space:]]*\"${ZIP_VERSION}\"([[:space:]]+#.*)?[[:space:]]*\$"; then
+        echo "ERROR: the \${subid} line of ${config_path} is not \"${ZIP_VERSION}\": the file is from a run with another ${var_name}, or was edited. Remove it or use a new RUN_DATE." >&2
         exit 1
     fi
 }

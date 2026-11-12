@@ -92,16 +92,16 @@ run_wrapper() {
             echo "${app}_bidsapp-${v}.sif" > "$CASE_DIR/base/${app}_bidsapp-${v}.sif"
         fi
     done
-    # The wrappers read .env from the directory they are started in.
-    cat > "$CASE_DIR/cwd/.env" <<EOF
-BASE_DIR=$CASE_DIR/base
-SCRATCH_DIR_ANTS=$CASE_DIR/scratch/ants
-SCRATCH_DIR_FS=$CASE_DIR/scratch/fs
-SCRATCH_DIR_MRIQC=$CASE_DIR/scratch/mriqc
-SCRATCH_DIR_COMPUTE=$CASE_DIR/scratch/compute
-DATALAD_SET_DIR=$CASE_DIR/study
-FS_LICENSE=$FAKE_HOME/license.txt
-EOF
+    # The wrappers read .env from the directory they are started in. %q keeps
+    # a temp path with a space in it one value.
+    printf '%s=%q\n' \
+        BASE_DIR "$CASE_DIR/base" \
+        SCRATCH_DIR_ANTS "$CASE_DIR/scratch/ants" \
+        SCRATCH_DIR_FS "$CASE_DIR/scratch/fs" \
+        SCRATCH_DIR_MRIQC "$CASE_DIR/scratch/mriqc" \
+        SCRATCH_DIR_COMPUTE "$CASE_DIR/scratch/compute" \
+        DATALAD_SET_DIR "$CASE_DIR/study" \
+        FS_LICENSE "$FAKE_HOME/license.txt" > "$CASE_DIR/cwd/.env"
     : > "$CASE_DIR/stub/calls.log"
     # A clean environment: no site modules, no caller's versions or .env. The
     # command substitution also waits for the wrapper's own `tee` to finish.
@@ -152,6 +152,36 @@ $(grep -A1 '^zip_foldernames' "$CASE_DIR/stub/config.yaml" 2>/dev/null || echo '
         fail "$script used another image when ${app}_bidsapp-9.8.7.sif was missing:
 $(calls)"
     fi
+
+    # A second run on the same RUN_DATE with another version finds the first
+    # run's config in the run directory. The wrapper must stop before babs
+    # instead of zipping 9.8.7's outputs under 9.8.6.
+    run_wrapper "${app}_reused" "$script" "9.8.6 9.8.7" "${version_var}=9.8.6"
+    if [ "$STATUS" -ne 0 ] || [ "$(grep -c '^babs-init' "$CASE_DIR/stub/calls.log")" -ne 1 ]; then
+        fail "$script did not complete its first run with ${version_var}=9.8.6 (exit $STATUS):
+$(calls)"
+    fi
+    run_wrapper "${app}_reused" "$script" "9.8.6 9.8.7" "${version_var}=9.8.7"
+    if [ "$STATUS" -eq 0 ] || grep -q '^babs-init' "$CASE_DIR/stub/calls.log"; then
+        fail "$script reused a config made for 9.8.6 when run with ${version_var}=9.8.7 (exit $STATUS):
+$(calls)"
+    fi
+
+    # A version that is not X.Y.Z is refused even when an image of that name
+    # exists, before anything is registered.
+    run_wrapper "${app}_malformed" "$script" "9.8.7rc1" "${version_var}=9.8.7rc1"
+    if [ "$STATUS" -eq 0 ] || [ -n "$(calls)" ]; then
+        fail "$script accepted ${version_var}=9.8.7rc1 (exit $STATUS):
+$(calls)"
+    fi
+done
+
+# Every wrapper in the repo has to be in the list above, or it runs untested.
+for wrapper in "$REPO_ROOT"/*_babs_script.sh; do
+    case "$(basename "$wrapper")" in
+        ants-nidm_babs_script.sh|freesurfer-nidm_babs_script.sh|mriqc-nidm_babs_script.sh) ;;
+        *) fail "$(basename "$wrapper") is not covered by this test; add it to the list" ;;
+    esac
 done
 
 # MRIQC_MAX_VOXEL_SIZE needs mriqc-nidm 0.1.3 or later, judged by the version
