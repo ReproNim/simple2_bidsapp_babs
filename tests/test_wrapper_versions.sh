@@ -178,6 +178,40 @@ $(calls)"
 $(grep -E 'subid|origin_url' "$CASE_DIR/stub/config.yaml" 2>/dev/null || echo '(no config reached babs init)')"
     fi
 
+    # A read-only config left in the run dir (protecting a hand edit) is
+    # replaced, not kept with a false "created" line.
+    rerun_config=$(compgen -G "$CASE_DIR/scratch/*/study-TEST_site-A_260101/config_${app}.yaml" || true)
+    if [ -z "$rerun_config" ]; then
+        fail "$script left no config in its run dir to rerun against"
+    else
+        sed -i 's|nidm_5\.0\.0|nidm_4.5.0|' "$rerun_config"
+        chmod a-w "$rerun_config"
+        run_wrapper "${app}_rerun" "$script" "9.8.6 9.8.7" "${version_var}=9.8.7" BABS_NIDM_DERIV=nidm_5.0.0
+        if [ "$STATUS" -ne 0 ] || ! grep -q 'derivatives/nidm_5\.0\.0"' "$CASE_DIR/stub/config.yaml" 2>/dev/null; then
+            fail "$script rerun over a read-only config (exit $STATUS) did not give babs init a fresh config:
+$(grep origin_url "$CASE_DIR/stub/config.yaml" 2>/dev/null || echo '(no config reached babs init)')"
+        fi
+        # A config that is a symlink is replaced, and the file it points to
+        # is left alone.
+        rm -f "$rerun_config"
+        echo "keep me" > "$CASE_DIR/link_target.yaml"
+        ln -s "$CASE_DIR/link_target.yaml" "$rerun_config"
+        run_wrapper "${app}_rerun" "$script" "9.8.6 9.8.7" "${version_var}=9.8.7"
+        if [ "$STATUS" -ne 0 ] || [ "$(cat "$CASE_DIR/link_target.yaml")" != "keep me" ] || [ -L "$rerun_config" ]; then
+            fail "$script rerun over a symlinked config (exit $STATUS) wrote through the link or kept it"
+        fi
+    fi
+
+    # Site and study names go into paths: a "/" or a leading dot is refused
+    # before anything is registered.
+    for bad in "A/B" ".."; do
+        SITE="$bad" run_wrapper "${app}_badname" "$script" "9.8.7" "${version_var}=9.8.7"
+        if [ "$STATUS" -eq 0 ] || [ -n "$(calls)" ]; then
+            fail "$script accepted the site name '$bad' (exit $STATUS):
+$(calls)"
+        fi
+    done
+
     # Two sites of one study on the same RUN_DATE: the second site's babs init
     # must read its own BIDS and NIDM inputs, not the config the first site
     # left behind (issue #23).
