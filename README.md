@@ -112,7 +112,7 @@ The harvest script checks this up front and prints the exact command when it's m
 Where things land:
 
 - **BABS project** (the deliverable): `<DATALAD_SET_DIR>/<study>/site-<SITE>/derivatives/babs-<app>` — deliberately **undated**. The project's own git history records when everything happened; a date in the folder name is redundant provenance that would have to be corrected later (and BABS projects can't be renamed after `babs init` — absolute paths are baked in). If a project already exists there, `babs init` refuses, which makes redoing a site an explicit decision rather than an accident.
-- **Scratch run dir**: `<SCRATCH_DIR_app>/<study>_<RUN_DATE>/` — config copy, container dataset
+- **Scratch run dir**: `<SCRATCH_DIR_app>/<study>_site-<SITE>_<RUN_DATE>/` — config copy, container dataset. A rerun of the same site on the same `RUN_DATE` reuses the config there; it stops if that config was made for another app version.
 - **Log**: `<SCRATCH_DIR_app>/babs_script_<RUN_DATE>_<timestamp>.log` — everything the run printed, survives your terminal
 
 `RUN_DATE` (auto-generated as `YYMMDD`, e.g. `260827`) stamps only these per-attempt items — the scratch run dir, compute space, log file, and SLURM job — never the deliverable.

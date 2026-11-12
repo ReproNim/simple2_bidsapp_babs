@@ -77,14 +77,15 @@ fail() {
 # Usage: run_wrapper <case> <script> <image versions, space-separated; "plain"
 #        is the unversioned <app>_bidsapp.sif> [VAR=value ...]
 # Sets CASE_DIR, STATUS and OUTPUT. Each image file's content is its own name.
+# The site is $SITE, A by default.
 run_wrapper() {
-    local case_name="$1" script="$2" images="$3"
+    local case_name="$1" script="$2" images="$3" site="${SITE:-A}"
     shift 3
     local app="${script%_babs_script.sh}"
     # The space keeps every path the wrappers get, .env values included, honest.
     CASE_DIR="$TEST_TMPDIR/sand box/$case_name"
     mkdir -p "$CASE_DIR"/{cwd,base,stub,scratch/ants,scratch/fs,scratch/mriqc,scratch/compute} \
-        "$CASE_DIR/study/study-TEST/site-A/sourcedata/raw"
+        "$CASE_DIR/study/study-TEST/site-${site}/sourcedata/raw"
     local v
     for v in $images; do
         if [ "$v" = plain ]; then
@@ -109,7 +110,7 @@ run_wrapper() {
     STATUS=0
     OUTPUT=$(cd "$CASE_DIR/cwd" && env -i PATH="$STUBS:/usr/bin:/bin" HOME="$FAKE_HOME" \
         RUN_DATE=260101 STUB_DIR="$CASE_DIR/stub" "$@" \
-        bash "$REPO_ROOT/$script" A study-TEST 2>&1) || STATUS=$?
+        bash "$REPO_ROOT/$script" "$site" study-TEST 2>&1) || STATUS=$?
 }
 
 calls() { cat "$CASE_DIR/stub/calls.log"; }
@@ -170,6 +171,18 @@ $(calls)"
     if [ "$STATUS" -eq 0 ] || grep -q '^babs-init' "$CASE_DIR/stub/calls.log"; then
         fail "$script reused a config made for 9.8.6 when run with ${version_var}=9.8.7 (exit $STATUS):
 $(calls)"
+    fi
+
+    # Two sites of one study on the same RUN_DATE: the second site's babs init
+    # must read its own BIDS and NIDM inputs, not the config the first site
+    # left behind (issue #23).
+    SITE=A run_wrapper "${app}_two_sites" "$script" "9.8.7" "${version_var}=9.8.7"
+    SITE=B run_wrapper "${app}_two_sites" "$script" "9.8.7" "${version_var}=9.8.7"
+    if [ "$STATUS" -ne 0 ] \
+        || ! grep -q 'study-TEST/site-B/sourcedata/raw' "$CASE_DIR/stub/config.yaml" 2>/dev/null \
+        || grep -q 'site-A/' "$CASE_DIR/stub/config.yaml" 2>/dev/null; then
+        fail "$script for site B after site A on one RUN_DATE (exit $STATUS) did not give babs init site B's inputs:
+$(grep 'origin_url' "$CASE_DIR/stub/config.yaml" 2>/dev/null || echo '(no config reached babs init)')"
     fi
 
     # A version that is not X.Y.Z is refused even when an image of that name
