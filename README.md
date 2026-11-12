@@ -112,8 +112,8 @@ The harvest script checks this up front and prints the exact command when it's m
 Where things land:
 
 - **BABS project** (the deliverable): `<DATALAD_SET_DIR>/<study>/site-<SITE>/derivatives/babs-<app>` — deliberately **undated**. The project's own git history records when everything happened; a date in the folder name is redundant provenance that would have to be corrected later (and BABS projects can't be renamed after `babs init` — absolute paths are baked in). If a project already exists there, `babs init` refuses, which makes redoing a site an explicit decision rather than an accident.
-- **Scratch run dir**: `<SCRATCH_DIR_app>/<study>_site-<SITE>_<RUN_DATE>/` — config copy, container dataset. A rerun of the same site on the same `RUN_DATE` reuses the config there; it stops if that config was made for another app version.
-- **Log**: `<SCRATCH_DIR_app>/babs_script_<RUN_DATE>_<timestamp>.log` — everything the run printed, survives your terminal
+- **Scratch run dir**: `<SCRATCH_DIR_app>/<study>_site-<SITE>_<RUN_DATE>/` — config copy, container dataset. Every run renders the config again from the template, so a rerun of the same site on the same `RUN_DATE` uses this run's settings (`BABS_NIDM_DERIV`, app version, paths from `.env`); edits made by hand to the config there are replaced.
+- **Log**: `<SCRATCH_DIR_app>/babs_script_<study>_site-<SITE>_<RUN_DATE>_<timestamp>.log` — everything the run printed, survives your terminal
 
 `RUN_DATE` (auto-generated as `YYMMDD`, e.g. `260827`) stamps only these per-attempt items — the scratch run dir, compute space, log file, and SLURM job — never the deliverable.
 
@@ -200,7 +200,7 @@ Moving to a new PyNIDM release (e.g. 5.0.0) therefore means: regenerate each sit
 
 ## Adding a new BIDS App
 
-1. Create `config_<app>-nidm.yaml` (start from an existing one).
+1. Create `config_<app>-nidm.yaml` (start from an existing one). Its `zip_foldernames` must hold exactly one line, `${subid}: "${ZIP_VERSION}"`; the wrapper stops otherwise.
 2. Create `<app>-nidm_babs_script.sh` from an existing wrapper — the app-specific part is just the block of variables at the top: `APP_NAME`, `SCRATCH_DIR`, `CONTAINER_DS_NAME`, `CONTAINER_NAME`, `SIF_FILENAME`, `SIF_ALT_PATHS`.
 3. Add the matching `SCRATCH_DIR_<APP>` to `.env`.
 4. Add the wrapper and its version variable to the list in `tests/test_wrapper_versions.sh`, and its `SCRATCH_DIR_<APP>` to the `.env` that test writes.
