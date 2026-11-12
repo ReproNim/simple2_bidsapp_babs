@@ -139,6 +139,12 @@ for v in 0-2-3 0-2-2; do
         zip_failures=$((zip_failures + 1))
     fi
 done
+# The same holds when the second key is written with quotes.
+write_zip_lines 'zip_foldernames:' '    ${subid}: "0-2-2"' '    "${subid}": "0-2-3"'
+if zip_check 0-2-2 "$zip_config"; then
+    echo "ZIP_VERSION=0-2-2 was accepted although a quoted \"\${subid}\" key holds 0-2-3" >&2
+    zip_failures=$((zip_failures + 1))
+fi
 # A commented-out zip line is not the zip line.
 write_zip_lines 'zip_foldernames:' '    # ${subid}: "0-2-3"' '    ${subid}: "0-2-2"'
 if zip_check 0-2-3 "$zip_config"; then

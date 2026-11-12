@@ -33,14 +33,22 @@ babs_check_zip_version() {
         echo "ERROR: ZIP_VERSION must be X-Y-Z, got '${ZIP_VERSION:-}'. The wrapper sets it with babs_resolve_version ${var_name} before it prepares the config." >&2
         exit 1
     fi
+    if [ ! -f "$config_path" ] || [ ! -r "$config_path" ]; then
+        echo "ERROR: cannot read the config ${config_path}." >&2
+        exit 1
+    fi
     # Compare the zip line itself, not any quoted value in the config. There
-    # must be exactly one: YAML keeps the last of two equal keys, so a second
-    # ${subid} line would leave open which version babs zips under.
+    # must be exactly one line with a ${subid} key, quoted or not: YAML keeps
+    # the last of two equal keys, so a second one would leave open which
+    # version babs zips under. This is a line check, not a YAML parse: it is
+    # exact for the configs the wrappers render, and a hand-edited config in
+    # another YAML style (flow mapping, a key under another section) can still
+    # get past it or be refused.
     local zip_lines zip_count
-    zip_lines=$(grep -E '^[[:space:]]*\$\{subid\}:' "$config_path" 2>/dev/null || true)
+    zip_lines=$(grep -E '^[[:space:]]*"?\$\{subid\}"?:' "$config_path" || true)
     zip_count=$(printf '%s' "$zip_lines" | grep -c . || true)
     if [ "$zip_count" -ne 1 ]; then
-        echo "ERROR: ${config_path} has ${zip_count} \${subid}: lines; expected the one under zip_foldernames. Remove it or use a new RUN_DATE." >&2
+        echo "ERROR: ${config_path} has ${zip_count} lines with a \${subid} key; expected one. Remove it or use a new RUN_DATE." >&2
         exit 1
     fi
     if ! printf '%s\n' "$zip_lines" | grep -qE "^[[:space:]]*\\\$\{subid\}:[[:space:]]*\"${ZIP_VERSION}\"([[:space:]]+#.*)?[[:space:]]*\$"; then

@@ -81,7 +81,8 @@ run_wrapper() {
     local case_name="$1" script="$2" images="$3"
     shift 3
     local app="${script%_babs_script.sh}"
-    CASE_DIR="$TEST_TMPDIR/$case_name"
+    # The space keeps every path the wrappers get, .env values included, honest.
+    CASE_DIR="$TEST_TMPDIR/sand box/$case_name"
     mkdir -p "$CASE_DIR"/{cwd,base,stub,scratch/ants,scratch/fs,scratch/mriqc,scratch/compute} \
         "$CASE_DIR/study/study-TEST/site-A/sourcedata/raw"
     local v
@@ -113,10 +114,14 @@ run_wrapper() {
 
 calls() { cat "$CASE_DIR/stub/calls.log"; }
 
-for entry in \
-    "ants-nidm_babs_script.sh ANTS_VERSION" \
-    "freesurfer-nidm_babs_script.sh FS_VERSION" \
-    "mriqc-nidm_babs_script.sh MRIQC_VERSION"; do
+# One entry per wrapper: "<script> <its version variable>". The check after
+# the loop fails for a wrapper in the repo that has no entry here.
+wrappers=(
+    "ants-nidm_babs_script.sh ANTS_VERSION"
+    "freesurfer-nidm_babs_script.sh FS_VERSION"
+    "mriqc-nidm_babs_script.sh MRIQC_VERSION"
+)
+for entry in "${wrappers[@]}"; do
     read -r script version_var <<< "$entry"
     app="${script%_babs_script.sh}"
 
@@ -178,10 +183,13 @@ done
 
 # Every wrapper in the repo has to be in the list above, or it runs untested.
 for wrapper in "$REPO_ROOT"/*_babs_script.sh; do
-    case "$(basename "$wrapper")" in
-        ants-nidm_babs_script.sh|freesurfer-nidm_babs_script.sh|mriqc-nidm_babs_script.sh) ;;
-        *) fail "$(basename "$wrapper") is not covered by this test; add it to the list" ;;
-    esac
+    listed=0
+    for entry in "${wrappers[@]}"; do
+        [ "${entry%% *}" = "$(basename "$wrapper")" ] && listed=1
+    done
+    if [ "$listed" -eq 0 ]; then
+        fail "$(basename "$wrapper") is not run by this test; add it to the wrappers list"
+    fi
 done
 
 # MRIQC_MAX_VOXEL_SIZE needs mriqc-nidm 0.1.3 or later, judged by the version
