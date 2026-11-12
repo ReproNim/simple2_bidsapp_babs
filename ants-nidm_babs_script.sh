@@ -77,7 +77,7 @@ babs_setup_env
 # ============================================================================
 # Create directories
 # ============================================================================
-RUN_DIR="${SCRATCH_DIR}/${DATASET_NAME}_${RUN_DATE}"
+RUN_DIR="${SCRATCH_DIR}/${DATASET_NAME}_site-${SITE_NAME}_${RUN_DATE}"
 COMPUTE_DIR="${SCRATCH_DIR_COMPUTE}/ants-nidm_compute_${RUN_DATE}"
 
 mkdir -p "$RUN_DIR"

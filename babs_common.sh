@@ -21,7 +21,7 @@ babs_resolve_version() {
     ZIP_VERSION="${version//./-}"
 }
 
-# A config left in RUN_DIR by an earlier attempt with the same RUN_DATE is
+# A config left in RUN_DIR by an earlier attempt for the same site and RUN_DATE is
 # reused as-is (babs_prepare_yaml_config skips an existing file), so check it
 # zips under this run's version.
 # Usage: babs_check_zip_version <config_path> <VAR_NAME>
@@ -305,8 +305,8 @@ babs_configure_max_voxel_size() {
         return 1
     fi
 
-    # A reused config may carry a limit from an earlier run (RUN_DIR has no
-    # site in it), and YAML keeps the last of two duplicate keys.
+    # A reused config may carry a limit from an earlier run of the same site
+    # and RUN_DATE, and YAML keeps the last of two duplicate keys.
     sed -i '/^[[:space:]]*--max-voxel-size:/d' "$config_path"
 
     [ -n "$max_voxel_size" ] || return 0
