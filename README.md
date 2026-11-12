@@ -203,5 +203,17 @@ Moving to a new PyNIDM release (e.g. 5.0.0) therefore means: regenerate each sit
 1. Create `config_<app>-nidm.yaml` (start from an existing one).
 2. Create `<app>-nidm_babs_script.sh` from an existing wrapper — the app-specific part is just the block of variables at the top: `APP_NAME`, `SCRATCH_DIR`, `CONTAINER_DS_NAME`, `CONTAINER_NAME`, `SIF_FILENAME`, `SIF_ALT_PATHS`.
 3. Add the matching `SCRATCH_DIR_<APP>` to `.env`.
+4. Add the wrapper and its version variable to the list in `tests/test_wrapper_versions.sh`, and its `SCRATCH_DIR_<APP>` to the `.env` that test writes.
 
 Everything else — argument parsing, container dataset setup, config substitution, init, submit — comes from `babs_common.sh`.
+
+## Tests
+
+Two shell scripts. Neither needs babs, a cluster or a `.env`:
+
+```bash
+bash tests/test_babs_pr369.sh         # config templating and the checks in babs_common.sh
+bash tests/test_wrapper_versions.sh   # each wrapper uses one version for its image, container name and zips
+```
+
+`test_wrapper_versions.sh` runs the three wrappers with stand-ins for `babs`, `datalad` and `apptainer` on `PATH`, in a temporary directory, so nothing is submitted and no image or dataset is read. Run both after changing a wrapper or `babs_common.sh`, and after merging `main` into a long-lived branch.
