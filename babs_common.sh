@@ -27,7 +27,14 @@ babs_resolve_version() {
 # Usage: babs_check_zip_version <config_path> <VAR_NAME>
 babs_check_zip_version() {
     local config_path="$1" var_name="$2"
-    if ! grep -q "\"${ZIP_VERSION}\"" "$config_path"; then
+    # Without a version the search below would be for "", which every config
+    # contains (--skip-bids-validation: ""), and the check would always pass.
+    if [[ ! "${ZIP_VERSION:-}" =~ ^[0-9]+-[0-9]+-[0-9]+$ ]]; then
+        echo "ERROR: no zip version is set for ${var_name} (ZIP_VERSION='${ZIP_VERSION:-}'). The wrapper must call babs_resolve_version before it prepares the config." >&2
+        exit 1
+    fi
+    # Compare the zip line itself, not any quoted value in the config.
+    if ! grep -qE "^[[:space:]]*\\\$\{subid\}:[[:space:]]*\"${ZIP_VERSION}\"[[:space:]]*$" "$config_path"; then
         echo "ERROR: ${config_path} does not zip as ${ZIP_VERSION}; it was made for another ${var_name}. Remove it or use a new RUN_DATE." >&2
         exit 1
     fi

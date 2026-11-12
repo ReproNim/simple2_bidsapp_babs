@@ -78,4 +78,47 @@ if babs_configure_max_voxel_size "$no_anchor" 2 0.1.3 2>/dev/null; then
     exit 1
 fi
 
+# babs_check_zip_version: a reused config must zip under this run's version.
+# The check exits on a mismatch, so each call runs in a subshell.
+zip_check() {  # <ZIP_VERSION> <config>
+    ( ZIP_VERSION="$1"; babs_check_zip_version "$2" ANTS_VERSION ) >/dev/null 2>&1
+}
+zip_config="$TEST_TMPDIR/zip_config.yaml"
+write_zip_config() {  # <value of an unrelated option> <zip version>
+    printf '%s\n' \
+        'bids_app_args:' \
+        '    --skip-bids-validation: ""' \
+        "    --some-option: \"$1\"" \
+        'zip_foldernames:' \
+        "    \${subid}: \"$2\"" > "$zip_config"
+}
+zip_failures=0
+write_zip_config other 0-2-2
+if ! zip_check 0-2-2 "$zip_config"; then
+    echo "a config zipping as 0-2-2 was rejected for ZIP_VERSION=0-2-2" >&2
+    zip_failures=$((zip_failures + 1))
+fi
+if zip_check 0-2-3 "$zip_config"; then
+    echo "a config zipping as 0-2-2 was accepted for ZIP_VERSION=0-2-3" >&2
+    zip_failures=$((zip_failures + 1))
+fi
+# A wrapper that never resolved its version has an empty ZIP_VERSION. Every
+# config holds an empty-string value somewhere, so "" must not count as a match.
+if zip_check "" "$zip_config"; then
+    echo "an empty ZIP_VERSION was accepted" >&2
+    zip_failures=$((zip_failures + 1))
+fi
+write_zip_config other ""
+if zip_check "" "$zip_config"; then
+    echo "an empty ZIP_VERSION was accepted for a config with an empty zip version" >&2
+    zip_failures=$((zip_failures + 1))
+fi
+# The version has to be the one on the zip line, not any quoted value.
+write_zip_config 0-2-3 0-2-2
+if zip_check 0-2-3 "$zip_config"; then
+    echo "ZIP_VERSION=0-2-3 was accepted because another option holds \"0-2-3\"" >&2
+    zip_failures=$((zip_failures + 1))
+fi
+test "$zip_failures" -eq 0
+
 echo "BABS PR #369 configuration checks passed"
