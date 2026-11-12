@@ -47,8 +47,8 @@ for template in "$REPO_ROOT"/config_*-nidm.yaml; do
     test "$(grep -c '^[[:space:]]*\$SESSION_SELECTION_FLAG: "--session-label"$' "$config_path")" -eq 1
 done
 
-# --max-voxel-size: a reused config must end up with exactly the current
-# setting, never a stale one from an earlier run.
+# --max-voxel-size: a config that already holds a limit must end up with exactly the current
+# setting, never a second line.
 config_path="$TEST_TMPDIR/config_mriqc-nidm.yaml"
 count_voxel_lines() { grep -c '^[[:space:]]*--max-voxel-size:' "$config_path" || true; }
 babs_configure_max_voxel_size "$config_path" 2 0.1.3
@@ -80,7 +80,7 @@ if babs_configure_max_voxel_size "$no_anchor" 2 0.1.3 2>/dev/null; then
     exit 1
 fi
 
-# babs_check_zip_version: a reused config must zip under this run's version.
+# babs_check_zip_version: the rendered config must zip under this run's version.
 # The check exits on a mismatch, so each call runs in a subshell.
 zip_check() {  # <ZIP_VERSION> <config>
     ( ZIP_VERSION="$1"; babs_check_zip_version "$2" ANTS_VERSION ) >/dev/null 2>&1

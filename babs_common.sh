@@ -21,9 +21,8 @@ babs_resolve_version() {
     ZIP_VERSION="${version//./-}"
 }
 
-# A config left in RUN_DIR by an earlier attempt for the same site and RUN_DATE is
-# reused as-is (babs_prepare_yaml_config skips an existing file), so check it
-# zips under this run's version.
+# Check that the config just rendered from the template zips under this run's
+# version, on exactly one zip line.
 # Usage: babs_check_zip_version <config_path> <VAR_NAME>
 babs_check_zip_version() {
     local config_path="$1" var_name="$2"
@@ -41,18 +40,18 @@ babs_check_zip_version() {
     # must be exactly one line with a ${subid} key, quoted or not: YAML keeps
     # the last of two equal keys, so a second one would leave open which
     # version babs zips under. This is a line check, not a YAML parse: it is
-    # exact for the configs the wrappers render, and a hand-edited config in
-    # another YAML style (flow mapping, a key under another section) can still
-    # get past it or be refused.
+    # exact for the templates in this repo, and a template written in another
+    # YAML style (flow mapping, single quotes, a key under another section)
+    # can still get past it or be refused.
     local zip_lines zip_count
     zip_lines=$(grep -E '^[[:space:]]*"?\$\{subid\}"?:' "$config_path" || true)
     zip_count=$(printf '%s' "$zip_lines" | grep -c . || true)
     if [ "$zip_count" -ne 1 ]; then
-        echo "ERROR: ${config_path} has ${zip_count} lines with a \${subid} key; expected one. Remove it or use a new RUN_DATE." >&2
+        echo "ERROR: ${config_path} has ${zip_count} lines with a \${subid} key; expected one. The config template's zip_foldernames must hold one line: \${subid}: \"\${ZIP_VERSION}\"." >&2
         exit 1
     fi
     if ! printf '%s\n' "$zip_lines" | grep -qE "^[[:space:]]*\\\$\{subid\}:[[:space:]]*\"${ZIP_VERSION}\"([[:space:]]+#.*)?[[:space:]]*\$"; then
-        echo "ERROR: the \${subid} line of ${config_path} is not \"${ZIP_VERSION}\": the file is from a run with another ${var_name}, or was edited. Remove it or use a new RUN_DATE." >&2
+        echo "ERROR: the \${subid} line of ${config_path} is not \"${ZIP_VERSION}\" (from ${var_name}). The config template's zip line must be \${subid}: \"\${ZIP_VERSION}\"." >&2
         exit 1
     fi
 }
@@ -78,6 +77,8 @@ babs_init_run_date() {
 
 # Set up logging - redirect all further output to a log file while still showing in console
 # Usage: babs_setup_logging <scratch_dir> <app_name>
+# Call after babs_parse_args: the log is named by study and site, so two sites
+# started in the same second do not write (and truncate) one file.
 babs_setup_logging() {
     local scratch_dir="$1"
     local app_name="$2"
@@ -86,7 +87,7 @@ babs_setup_logging() {
     # RUN_DIR is created -- without this, tee fails and the run has no log.
     mkdir -p "$scratch_dir"
 
-    LOG_FILE="${scratch_dir}/babs_script_${RUN_DATE}_$(date +%Y%m%d_%H%M%S).log"
+    LOG_FILE="${scratch_dir}/babs_script_${DATASET_NAME}_site-${SITE_NAME}_${RUN_DATE}_$(date +%Y%m%d_%H%M%S).log"
     echo "=== Script started at $(date) ===" | tee "$LOG_FILE"
     exec > >(tee -a "$LOG_FILE") 2>&1
 }
@@ -230,11 +231,9 @@ babs_prepare_yaml_config() {
     local output_path="$2"
     shift 2
 
-    if [ -f "$output_path" ]; then
-        echo "Config file already exists at $output_path, skipping creation"
-        return 0
-    fi
-
+    # Render on every run, replacing a config an earlier attempt left in
+    # RUN_DIR. A reused config kept that attempt's inputs (BABS_NIDM_DERIV,
+    # DATALAD_SET_DIR, FS_LICENSE, ...) while the log printed this run's.
     echo "Creating config YAML file from template..."
 
     # Copy template to output first
@@ -276,7 +275,7 @@ babs_configure_session_selection() {
         return 1
     fi
 
-    # Make repeated wrapper runs deterministic if a generated config is reused.
+    # Idempotent: a config that already holds the flag ends up with one.
     sed -i '/^[[:space:]]*\$SESSION_SELECTION_FLAG:/d' "$config_path"
 
     if [ "$processing_level" = "session" ]; then
@@ -305,8 +304,8 @@ babs_configure_max_voxel_size() {
         return 1
     fi
 
-    # A reused config may carry a limit from an earlier run of the same site
-    # and RUN_DATE, and YAML keeps the last of two duplicate keys.
+    # Idempotent: drop any limit already there, since YAML keeps the last of
+    # two duplicate keys.
     sed -i '/^[[:space:]]*--max-voxel-size:/d' "$config_path"
 
     [ -n "$max_voxel_size" ] || return 0
