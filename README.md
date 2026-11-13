@@ -185,7 +185,7 @@ Each app's YAML config sets its SLURM resources, verified against real runs:
 |---|---|---|
 | `config_freesurfer-nidm.yaml` | 8 CPUs, 32 GB, 6 h | needs `FS_LICENSE`; measured 2.5–3.5 h; peak ~29 GB (Caltech, 1 T1w) up to ~31.3 GB (ONRC_2, 5 T1w runs) — sites with many T1w runs per session sit close to the 32 GB ceiling |
 | `config_ants-nidm.yaml` | 16 CPUs, 48 GB, 4 h, 1 GPU | registration is FireANTs on CUDA, so a GPU is required (`--gres=gpu:1` plus `--nv`); the app fails at start without one. The wrapper runs `ants-nidm_bidsapp-0.2.2.sif` (outputs zipped as `0-2-2`) and stops if that image is missing; `ANTS_VERSION=X.Y.Z` selects `ants-nidm_bidsapp-X.Y.Z.sif` and sets the container name and zip version to match, so reproducing the 0.1.0 Caltech run means providing that image as `ants-nidm_bidsapp-0.1.0.sif` and setting `ANTS_VERSION=0.1.0` |
-| `config_mriqc-nidm.yaml` | 12 CPUs, 20 GB, 30 min | measured ~4–5 min and ~10.4 GB peak (Caltech); the allocation must stay above MRIQC's own `--mem 16G` |
+| `config_mriqc-nidm.yaml` | 12 CPUs, 20 GB, 30 min | measured ~4–5 min and ~10.4 GB peak (Caltech); the allocation must stay above MRIQC's own `--mem 16G`. Rates T1w, T2w and bold only (`--modalities`): mriqc-nidm cannot convert a dwi IQM file to NIDM, and a subject with one would lose all its IQMs |
 
 The wrappers substitute the environment-specific values (paths, license, session flag) into a copy of the config at launch; the copy lands in the scratch run directory so every run records exactly what it used.
 
