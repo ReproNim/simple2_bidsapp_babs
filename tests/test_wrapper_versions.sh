@@ -77,14 +77,15 @@ fail() {
 # Usage: run_wrapper <case> <script> <image versions, space-separated; "plain"
 #        is the unversioned <app>_bidsapp.sif> [VAR=value ...]
 # Sets CASE_DIR, STATUS and OUTPUT. Each image file's content is its own name.
+# The site is $SITE, A by default.
 run_wrapper() {
-    local case_name="$1" script="$2" images="$3"
+    local case_name="$1" script="$2" images="$3" site="${SITE:-A}"
     shift 3
     local app="${script%_babs_script.sh}"
     # The space keeps every path the wrappers get, .env values included, honest.
     CASE_DIR="$TEST_TMPDIR/sand box/$case_name"
     mkdir -p "$CASE_DIR"/{cwd,base,stub,scratch/ants,scratch/fs,scratch/mriqc,scratch/compute} \
-        "$CASE_DIR/study/study-TEST/site-A/sourcedata/raw"
+        "$CASE_DIR/study/study-TEST/site-${site}/sourcedata/raw"
     local v
     for v in $images; do
         if [ "$v" = plain ]; then
@@ -109,7 +110,7 @@ run_wrapper() {
     STATUS=0
     OUTPUT=$(cd "$CASE_DIR/cwd" && env -i PATH="$STUBS:/usr/bin:/bin" HOME="$FAKE_HOME" \
         RUN_DATE=260101 STUB_DIR="$CASE_DIR/stub" "$@" \
-        bash "$REPO_ROOT/$script" A study-TEST 2>&1) || STATUS=$?
+        bash "$REPO_ROOT/$script" "$site" study-TEST 2>&1) || STATUS=$?
 }
 
 calls() { cat "$CASE_DIR/stub/calls.log"; }
@@ -158,18 +159,81 @@ $(grep -A1 '^zip_foldernames' "$CASE_DIR/stub/config.yaml" 2>/dev/null || echo '
 $(calls)"
     fi
 
-    # A second run on the same RUN_DATE with another version finds the first
-    # run's config in the run directory. The wrapper must stop before babs
-    # instead of zipping 9.8.7's outputs under 9.8.6.
-    run_wrapper "${app}_reused" "$script" "9.8.6 9.8.7" "${version_var}=9.8.6"
-    if [ "$STATUS" -ne 0 ] || [ "$(grep -c '^babs-init' "$CASE_DIR/stub/calls.log")" -ne 1 ]; then
-        fail "$script did not complete its first run with ${version_var}=9.8.6 (exit $STATUS):
+    # A second run of the same site on the same RUN_DATE finds the first run's
+    # config in the run directory. It must render its own: zip under 9.8.7,
+    # not 9.8.6, and read the NIDM derivative it was given, not the first
+    # run's.
+    run_wrapper "${app}_rerun" "$script" "9.8.6 9.8.7" "${version_var}=9.8.6"
+    if [ "$STATUS" -ne 0 ] || [ "$(grep -c '^babs-init' "$CASE_DIR/stub/calls.log")" -ne 1 ] \
+        || ! grep -q 'derivatives/nidm_4\.5\.0"' "$CASE_DIR/stub/config.yaml" 2>/dev/null; then
+        fail "$script did not complete its first run with ${version_var}=9.8.6 on nidm_4.5.0 (exit $STATUS):
 $(calls)"
     fi
-    run_wrapper "${app}_reused" "$script" "9.8.6 9.8.7" "${version_var}=9.8.7"
-    if [ "$STATUS" -eq 0 ] || grep -q '^babs-init' "$CASE_DIR/stub/calls.log"; then
-        fail "$script reused a config made for 9.8.6 when run with ${version_var}=9.8.7 (exit $STATUS):
+    run_wrapper "${app}_rerun" "$script" "9.8.6 9.8.7" "${version_var}=9.8.7" BABS_NIDM_DERIV=nidm_5.0.0
+    if [ "$STATUS" -ne 0 ] \
+        || ! grep -qx '    ${subid}: "9-8-7"' "$CASE_DIR/stub/config.yaml" 2>/dev/null \
+        || ! grep -q 'derivatives/nidm_5\.0\.0"' "$CASE_DIR/stub/config.yaml" 2>/dev/null \
+        || grep -q 'nidm_4\.5\.0' "$CASE_DIR/stub/config.yaml" 2>/dev/null; then
+        fail "$script rerun with ${version_var}=9.8.7 BABS_NIDM_DERIV=nidm_5.0.0 (exit $STATUS) did not give babs init a config of its own:
+$(grep -E 'subid|origin_url' "$CASE_DIR/stub/config.yaml" 2>/dev/null || echo '(no config reached babs init)')"
+    fi
+
+    # A read-only config left in the run dir (protecting a hand edit) is
+    # replaced, not kept with a false "created" line.
+    rerun_config=$(compgen -G "$CASE_DIR/scratch/*/study-TEST_site-A_260101/config_${app}.yaml" || true)
+    if [ -z "$rerun_config" ]; then
+        fail "$script left no config in its run dir to rerun against"
+    else
+        sed -i 's|nidm_5\.0\.0|nidm_4.5.0|' "$rerun_config"
+        chmod a-w "$rerun_config"
+        run_wrapper "${app}_rerun" "$script" "9.8.6 9.8.7" "${version_var}=9.8.7" BABS_NIDM_DERIV=nidm_5.0.0
+        if [ "$STATUS" -ne 0 ] || ! grep -q 'derivatives/nidm_5\.0\.0"' "$CASE_DIR/stub/config.yaml" 2>/dev/null; then
+            fail "$script rerun over a read-only config (exit $STATUS) did not give babs init a fresh config:
+$(grep origin_url "$CASE_DIR/stub/config.yaml" 2>/dev/null || echo '(no config reached babs init)')"
+        fi
+        # A config that is a symlink is replaced, and the file it points to
+        # is left alone.
+        rm -f "$rerun_config"
+        echo "keep me" > "$CASE_DIR/link_target.yaml"
+        ln -s "$CASE_DIR/link_target.yaml" "$rerun_config"
+        run_wrapper "${app}_rerun" "$script" "9.8.6 9.8.7" "${version_var}=9.8.7"
+        if [ "$STATUS" -ne 0 ] || [ "$(cat "$CASE_DIR/link_target.yaml")" != "keep me" ] || [ -L "$rerun_config" ]; then
+            fail "$script rerun over a symlinked config (exit $STATUS) wrote through the link or kept it"
+        fi
+    fi
+
+    # Site and study names go into paths: a "/" or a leading dot is refused
+    # before anything is registered.
+    for bad in "A/B" ".."; do
+        SITE="$bad" run_wrapper "${app}_badname" "$script" "9.8.7" "${version_var}=9.8.7"
+        if [ "$STATUS" -eq 0 ] || [ -n "$(calls)" ]; then
+            fail "$script accepted the site name '$bad' (exit $STATUS):
 $(calls)"
+        fi
+    done
+
+    # Two sites of one study on the same RUN_DATE: the second site's babs init
+    # must read its own BIDS and NIDM inputs, not the config the first site
+    # left behind (issue #23).
+    SITE=A run_wrapper "${app}_two_sites" "$script" "9.8.7" "${version_var}=9.8.7"
+    if [ "$STATUS" -ne 0 ] || ! grep -q 'study-TEST/site-A/sourcedata/raw' "$CASE_DIR/stub/config.yaml" 2>/dev/null; then
+        fail "$script for site A (exit $STATUS) did not give babs init site A's inputs:
+$OUTPUT"
+    fi
+    SITE=B run_wrapper "${app}_two_sites" "$script" "9.8.7" "${version_var}=9.8.7"
+    # Each site writes its own log, so two sites started together do not
+    # share (and truncate) one file.
+    for s in A B; do
+        if ! compgen -G "$CASE_DIR/scratch/*/babs_script_study-TEST_site-${s}_260101_*.log" >/dev/null; then
+            fail "$script wrote no log named for study-TEST site-${s}:
+$(ls "$CASE_DIR"/scratch/*/)"
+        fi
+    done
+    if [ "$STATUS" -ne 0 ] \
+        || ! grep -q 'study-TEST/site-B/sourcedata/raw' "$CASE_DIR/stub/config.yaml" 2>/dev/null \
+        || grep -q 'site-A/' "$CASE_DIR/stub/config.yaml" 2>/dev/null; then
+        fail "$script for site B after site A on one RUN_DATE (exit $STATUS) did not give babs init site B's inputs:
+$(grep 'origin_url' "$CASE_DIR/stub/config.yaml" 2>/dev/null || echo '(no config reached babs init)')"
     fi
 
     # A version that is not X.Y.Z is refused even when an image of that name

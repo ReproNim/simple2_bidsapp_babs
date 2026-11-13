@@ -112,8 +112,8 @@ The harvest script checks this up front and prints the exact command when it's m
 Where things land:
 
 - **BABS project** (the deliverable): `<DATALAD_SET_DIR>/<study>/site-<SITE>/derivatives/babs-<app>` — deliberately **undated**. The project's own git history records when everything happened; a date in the folder name is redundant provenance that would have to be corrected later (and BABS projects can't be renamed after `babs init` — absolute paths are baked in). If a project already exists there, `babs init` refuses, which makes redoing a site an explicit decision rather than an accident.
-- **Scratch run dir**: `<SCRATCH_DIR_app>/<study>_<RUN_DATE>/` — config copy, container dataset
-- **Log**: `<SCRATCH_DIR_app>/babs_script_<RUN_DATE>_<timestamp>.log` — everything the run printed, survives your terminal
+- **Scratch run dir**: `<SCRATCH_DIR_app>/<study>_site-<SITE>_<RUN_DATE>/` — config copy, container dataset. Every run renders the config again from the template, so a rerun of the same site on the same `RUN_DATE` uses this run's settings (`BABS_NIDM_DERIV`, app version, paths from `.env`); edits made by hand to the config there are replaced.
+- **Log**: `<SCRATCH_DIR_app>/babs_script_<study>_site-<SITE>_<RUN_DATE>_<timestamp>.log` — everything the run printed, survives your terminal
 
 `RUN_DATE` (auto-generated as `YYMMDD`, e.g. `260827`) stamps only these per-attempt items — the scratch run dir, compute space, log file, and SLURM job — never the deliverable.
 
@@ -187,7 +187,7 @@ Each app's YAML config sets its SLURM resources, verified against real runs:
 | `config_ants-nidm.yaml` | 16 CPUs, 48 GB, 4 h, 1 GPU | registration is FireANTs on CUDA, so a GPU is required (`--gres=gpu:1` plus `--nv`); the app fails at start without one. The wrapper runs `ants-nidm_bidsapp-0.2.2.sif` (outputs zipped as `0-2-2`) and stops if that image is missing; `ANTS_VERSION=X.Y.Z` selects `ants-nidm_bidsapp-X.Y.Z.sif` and sets the container name and zip version to match, so reproducing the 0.1.0 Caltech run means providing that image as `ants-nidm_bidsapp-0.1.0.sif` and setting `ANTS_VERSION=0.1.0` |
 | `config_mriqc-nidm.yaml` | 12 CPUs, 20 GB, 30 min | measured ~4–5 min and ~10.4 GB peak (Caltech); the allocation must stay above MRIQC's own `--mem 16G` |
 
-The wrappers substitute the environment-specific values (paths, license, session flag) into a copy of the config at launch; the copy lands in the scratch run directory so every run records exactly what it used.
+The wrappers substitute the environment-specific values (paths, license, session flag) into a copy of the config at launch; the copy lands in the scratch run directory, where it records what the latest run of that site on that `RUN_DATE` used (a rerun replaces it).
 
 ### NIDM versions
 
@@ -200,7 +200,7 @@ Moving to a new PyNIDM release (e.g. 5.0.0) therefore means: regenerate each sit
 
 ## Adding a new BIDS App
 
-1. Create `config_<app>-nidm.yaml` (start from an existing one).
+1. Create `config_<app>-nidm.yaml` (start from an existing one). Its `zip_foldernames` must hold exactly one line, `${subid}: "${ZIP_VERSION}"`; the wrapper stops otherwise.
 2. Create `<app>-nidm_babs_script.sh` from an existing wrapper — the app-specific part is just the block of variables at the top: `APP_NAME`, `SCRATCH_DIR`, `CONTAINER_DS_NAME`, `CONTAINER_NAME`, `SIF_FILENAME`, `SIF_ALT_PATHS`.
 3. Add the matching `SCRATCH_DIR_<APP>` to `.env`.
 4. Add the wrapper and its version variable to the list in `tests/test_wrapper_versions.sh`, and its `SCRATCH_DIR_<APP>` to the `.env` that test writes.
