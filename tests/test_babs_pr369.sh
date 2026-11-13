@@ -24,6 +24,17 @@ for template in "$REPO_ROOT"/config_*-nidm.yaml; do
     grep -q 'path_in_babs: sourcedata/BIDS' "$config_path"
     grep -q 'path_in_babs: sourcedata/NIDM' "$config_path"
 
+    # MRIQC rates T1w, T2w and bold only: without --modalities it adds dwi,
+    # whose IQM JSON mriqc-nidm cannot convert, so every subject with a dwi
+    # image would fail and lose its other IQMs too.
+    if [ "$(basename "$template")" = config_mriqc-nidm.yaml ]; then
+        if [ "$(grep -c '^[[:space:]]*--modalities:' "$config_path")" -ne 1 ] \
+            || ! grep -qx '    --modalities: "T1w T2w bold"' "$config_path"; then
+            echo "$template must hold one line: --modalities: \"T1w T2w bold\"" >&2
+            exit 1
+        fi
+    fi
+
     # The per-subject zip scheme depends on ${subid} SURVIVING templating:
     # babs_prepare_yaml_config only substitutes the vars passed to it, so
     # ${subid} must reach the rendered participant_job.sh where bash expands it
