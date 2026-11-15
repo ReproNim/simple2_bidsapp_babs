@@ -49,6 +49,7 @@ case "${1:-}" in
             shift
         done
         echo "babs-init container_name=${name}" >> "$STUB_DIR/calls.log" ;;
+    check-setup) [ -z "${STUB_CHECKSETUP_FAIL:-}" ] || exit 1 ;;
     submit)
         echo "babs-submit" >> "$STUB_DIR/calls.log"
         [ -z "${STUB_SUBMIT_FAIL:-}" ] || exit 1 ;;
@@ -295,14 +296,18 @@ $(calls)"
     # A failed push of the text2git commit stops the run before submit, and a
     # failed babs submit makes the run fail.
     for sibling in input output; do
-        run_wrapper "${app}_pushfail_${sibling}" "$script" "9.8.7" "${version_var}=9.8.7" STUB_PUSH_FAIL="$sibling"
-        if [ "$STATUS" -eq 0 ] || grep -q '^babs-submit' "$CASE_DIR/stub/calls.log"; then
+        run_wrapper "${app}_pushfail_${sibling}" "$script" "9.8.7" "${version_var}=9.8.7" STUB_PUSH_FAIL="$sibling" BABS_SUBMIT_COUNT=2
+        if [ "$STATUS" -eq 0 ] || grep -q '^babs-submit' "$CASE_DIR/stub/calls.log" \
+            || [[ "$OUTPUT" != *"datalad push --to input --data nothing && datalad push --to output --data nothing"* ]] \
+            || [[ "$OUTPUT" != *"&& babs submit --count 2"* ]]; then
             fail "$script went on after the push to the ${sibling} sibling failed (exit $STATUS):
 $(calls)"
         fi
     done
-    run_wrapper "${app}_t2gfail" "$script" "9.8.7" "${version_var}=9.8.7" STUB_TEXT2GIT_FAIL=1
-    if [ "$STATUS" -eq 0 ] || grep -qE '^(datalad-push|babs-submit)' "$CASE_DIR/stub/calls.log"; then
+    run_wrapper "${app}_t2gfail" "$script" "9.8.7" "${version_var}=9.8.7" STUB_TEXT2GIT_FAIL=1 BABS_SUBMIT_COUNT=2
+    if [ "$STATUS" -eq 0 ] || grep -qE '^(datalad-push|babs-submit)' "$CASE_DIR/stub/calls.log" \
+        || [[ "$OUTPUT" != *"datalad run-procedure cfg_text2git"* ]] \
+        || [[ "$OUTPUT" != *"&& babs submit --count 2"* ]]; then
         fail "$script went on after text2git failed (exit $STATUS):
 $(calls)"
     fi
@@ -310,6 +315,15 @@ $(calls)"
     if [ "$STATUS" -eq 0 ] || [[ "$OUTPUT" == *"Script completed"* ]] \
         || [[ "$OUTPUT" != *"&& babs submit --count 2"* ]]; then
         fail "$script reported success after babs submit failed, or its remedy dropped BABS_SUBMIT_COUNT (exit $STATUS):
+$OUTPUT"
+    fi
+
+    # A failed setup check builds the project, submits nothing, and prints
+    # the submit command with the ramp's --count.
+    run_wrapper "${app}_checkfail" "$script" "9.8.7" "${version_var}=9.8.7" STUB_CHECKSETUP_FAIL=1 BABS_SUBMIT_COUNT=2
+    if [ "$STATUS" -eq 0 ] || grep -q '^babs-submit' "$CASE_DIR/stub/calls.log" \
+        || [[ "$OUTPUT" != *"&& babs submit --count 2"* ]]; then
+        fail "$script after a failed setup check (exit $STATUS) submitted or dropped --count from its remedy:
 $OUTPUT"
     fi
 

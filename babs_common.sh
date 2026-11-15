@@ -477,6 +477,8 @@ babs_check_no_project() {
         if [ -d "$output_dir/.babs" ] && [ ! -L "$output_dir" ]; then
             echo "ERROR: a BABS project already exists at ${output_dir}." >&2
             echo "  To submit more of its jobs: cd \"${output_dir}\" && babs submit" >&2
+            echo "  If an earlier run stopped at text2git or the push, run the commands its log printed first." >&2
+            echo "  If babs submit there says to run babs init first, babs init did not finish and the directory holds no usable project: remove it and run the wrapper again." >&2
             echo "  To build a new project with this run's settings, set BABS_OUTPUT_DIR to a new absolute path." >&2
         elif [ -d "$output_dir" ] && [ ! -L "$output_dir" ] && [ -z "$(ls -A "$output_dir" 2>/dev/null)" ]; then
             echo "ERROR: ${output_dir} exists and is empty, as a babs init that did not finish can leave it." >&2
@@ -498,6 +500,8 @@ babs_init_and_submit() {
     local config_path="$3"
     local output_dir="$4"
     local processing_level="${5:-subject}"
+    # The command to submit this run's jobs by hand, keeping the ramp.
+    local submit_cmd="cd \"${output_dir}\" && babs submit${BABS_SUBMIT_COUNT:+ --count ${BABS_SUBMIT_COUNT}}"
 
     babs_check_no_project "$output_dir"
 
@@ -564,7 +568,7 @@ babs_init_and_submit() {
             echo "  After fixing the cause, in the project run:" >&2
             echo "    datalad run-procedure cfg_text2git" >&2
             echo "    datalad push --to input --data nothing && datalad push --to output --data nothing" >&2
-            echo "  and then babs submit." >&2
+            echo "  and then: ${submit_cmd}" >&2
             exit 1
         fi
 
@@ -582,7 +586,7 @@ babs_init_and_submit() {
             echo "ERROR: the text2git commit could not be pushed to the RIA siblings of ${output_dir}; nothing was submitted." >&2
             echo "  After fixing the cause, in the project run:" >&2
             echo "    datalad push --to input --data nothing && datalad push --to output --data nothing" >&2
-            echo "  and then babs submit." >&2
+            echo "  and then: ${submit_cmd}" >&2
             exit 1
         fi
     fi
@@ -635,7 +639,6 @@ babs_init_and_submit() {
         submit_args=( --count "$BABS_SUBMIT_COUNT" )
     fi
     # The command to submit this run's jobs by hand, keeping the ramp.
-    local submit_cmd="cd \"${output_dir}\" && babs submit${BABS_SUBMIT_COUNT:+ --count ${BABS_SUBMIT_COUNT}}"
 
     if [ "$check_setup_ok" -eq 1 ]; then
         if [ -n "${BABS_SUBMIT_COUNT:-}" ]; then
