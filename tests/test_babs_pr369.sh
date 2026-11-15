@@ -27,12 +27,37 @@ for template in "$REPO_ROOT"/config_*-nidm.yaml; do
     # MRIQC rates T1w, T2w and bold only: without --modalities it adds dwi,
     # whose IQM JSON mriqc-nidm cannot convert, so every subject with a dwi
     # image would fail and lose its other IQMs too.
+    # BABS passes only the bids_app_args block to the app, so the line has to
+    # be in that block.
     if [ "$(basename "$template")" = config_mriqc-nidm.yaml ]; then
+        app_args=$(awk '/^bids_app_args:/ {f = 1; next} /^[^[:space:]#]/ {f = 0} f' "$config_path")
         if [ "$(grep -c '^[[:space:]]*--modalities:' "$config_path")" -ne 1 ] \
-            || ! grep -qx '    --modalities: "T1w T2w bold"' "$config_path"; then
-            echo "$template must hold one line: --modalities: \"T1w T2w bold\"" >&2
+            || ! grep -qx '    --modalities: "T1w T2w bold"' <<< "$app_args"; then
+            echo "$template must hold one line under bids_app_args: --modalities: \"T1w T2w bold\"" >&2
             exit 1
         fi
+
+        # babs_require_min_version: the mriqc wrapper's floor for --modalities.
+        # It exits on a version below the floor, so each call runs in a subshell.
+        min_failures=0
+        for v in 0.1.3 0.1.4 0.1.10 1.0.0; do
+            if ! ( babs_require_min_version MRIQC_VERSION "$v" 0.1.3 test ) 2>/dev/null; then
+                echo "MRIQC_VERSION=$v was refused by a 0.1.3 floor" >&2
+                min_failures=$((min_failures + 1))
+            fi
+        done
+        for v in 0.1.0 0.1.2 0.0.9; do
+            if ( babs_require_min_version MRIQC_VERSION "$v" 0.1.3 test ) 2>/dev/null; then
+                echo "MRIQC_VERSION=$v was accepted by a 0.1.3 floor" >&2
+                min_failures=$((min_failures + 1))
+            fi
+        done
+        # The mriqc wrapper applies the floor.
+        if ! grep -q '^babs_require_min_version MRIQC_VERSION "$MRIQC_VERSION" 0\.1\.3 ' "$REPO_ROOT/mriqc-nidm_babs_script.sh"; then
+            echo "mriqc-nidm_babs_script.sh does not require MRIQC_VERSION 0.1.3 or later" >&2
+            min_failures=$((min_failures + 1))
+        fi
+        test "$min_failures" -eq 0
     fi
 
     # The per-subject zip scheme depends on ${subid} SURVIVING templating:

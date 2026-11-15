@@ -266,10 +266,21 @@ babs_configure_session_selection() {
     fi
 }
 
+# Stop unless a version is <min> or later.
+# Usage: babs_require_min_version <VAR_NAME> <version> <min> <what needs it>
+babs_require_min_version() {
+    local var_name="$1" version="$2" min="$3" needed_by="$4"
+    if [ "$(printf '%s\n%s\n' "$min" "$version" | sort -V | head -1)" != "$min" ]; then
+        echo "ERROR: ${needed_by} needs ${var_name} ${min} or later, got ${version}" >&2
+        exit 1
+    fi
+}
+
 # Pass mriqc-nidm's --max-voxel-size through bids_app_args.
 # Usage: babs_configure_max_voxel_size <config_path> <mm or empty> <mriqc_version>
-# An empty value leaves every image rated. The option exists from mriqc-nidm
-# 0.1.3; older images forward it to MRIQC, which rejects it in every job.
+# An empty value leaves every T1w, T2w and bold image rated. The option
+# exists from mriqc-nidm 0.1.3; older images forward it to MRIQC, which
+# rejects it in every job.
 babs_configure_max_voxel_size() {
     local config_path="$1"
     local max_voxel_size="$2"
