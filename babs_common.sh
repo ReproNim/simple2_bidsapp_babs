@@ -93,7 +93,14 @@ babs_setup_logging() {
     # An unset SCRATCH_DIR_<APP> would put the run dir at the file-system
     # root, where mkdir fails, and leave the run in the current directory.
     if [ -z "$scratch_dir" ]; then
-        echo "ERROR: no scratch dir for ${app_name}: set its SCRATCH_DIR_<APP> in .env" >&2
+        local scratch_var
+        case "$app_name" in
+            ants-nidm) scratch_var=SCRATCH_DIR_ANTS ;;
+            freesurfer-nidm) scratch_var=SCRATCH_DIR_FS ;;
+            mriqc-nidm) scratch_var=SCRATCH_DIR_MRIQC ;;
+            *) scratch_var="the SCRATCH_DIR_* variable for ${app_name}" ;;
+        esac
+        echo "ERROR: no scratch dir for ${app_name}: ${scratch_var} is not set. Set it in .env in the directory the wrapper is started from (the repo root)." >&2
         exit 1
     fi
 
@@ -458,10 +465,17 @@ babs_shared_group() {
 # Usage: babs_check_no_project <output_dir>
 babs_check_no_project() {
     local output_dir="$1"
+    # The wrapper changes into the run dir before babs init, so a relative
+    # path would be checked here and used somewhere else.
+    if [[ "$output_dir" != /* ]]; then
+        echo "ERROR: the project path must be absolute, got '${output_dir}' (from BABS_OUTPUT_DIR or DATALAD_SET_DIR)." >&2
+        exit 1
+    fi
     if [ -e "$output_dir" ] || [ -L "$output_dir" ]; then
-        echo "ERROR: a BABS project already exists at ${output_dir}." >&2
-        echo "  To submit more of its jobs: cd \"${output_dir}\" && babs submit" >&2
-        echo "  To build a new project with this run's settings, set BABS_OUTPUT_DIR to a new path." >&2
+        echo "ERROR: ${output_dir} already exists: a BABS project, or what a babs init that did not finish left behind." >&2
+        echo "  To submit more of the project's jobs: cd \"${output_dir}\" && babs submit" >&2
+        echo "  If babs init did not finish there (babs submit says to run babs init first), remove the directory and run the wrapper again." >&2
+        echo "  To build a new project with this run's settings, set BABS_OUTPUT_DIR to a new absolute path." >&2
         exit 1
     fi
 }
@@ -535,7 +549,10 @@ babs_init_and_submit() {
     # is what we want: this only changes where *text* lands.
     if [ "${BABS_TEXT2GIT:-1}" = "1" ]; then
         echo "Applying text2git so .ttl/.json/.tsv land in git, not annex..."
-        datalad run-procedure -d "${output_dir}" cfg_text2git
+        if ! datalad run-procedure -d "${output_dir}" cfg_text2git; then
+            echo "ERROR: text2git could not be applied to ${output_dir}; nothing was submitted." >&2
+            exit 1
+        fi
 
         # Push the commit to both RIA siblings immediately. `babs init` already
         # published master to them BEFORE this commit existed, and nothing later
@@ -547,8 +564,10 @@ babs_init_and_submit() {
         # divergence post_babs.sh refuses to auto-replay at harvest time.
         # --data nothing: this is a git-history push, no annexed content.
         echo "Publishing the text2git commit to the RIA siblings..."
-        datalad push --to input --data nothing
-        datalad push --to output --data nothing
+        if ! datalad push --to input --data nothing || ! datalad push --to output --data nothing; then
+            echo "ERROR: the text2git commit could not be pushed to the RIA siblings of ${output_dir}; nothing was submitted." >&2
+            exit 1
+        fi
     fi
 
     # Check the setup before submitting.
@@ -606,7 +625,10 @@ babs_init_and_submit() {
         else
             echo "Submitting all jobs..."
         fi
-        babs submit ${submit_args[@]+"${submit_args[@]}"}
+        if ! babs submit ${submit_args[@]+"${submit_args[@]}"}; then
+            echo "ERROR: babs submit failed for ${output_dir}. Review the errors above, then submit with: cd \"${output_dir}\" && babs submit" >&2
+            exit 1
+        fi
     else
         echo "BABS setup check failed. Please review the errors above."
         echo "The project is built; nothing was submitted. If this is the known"

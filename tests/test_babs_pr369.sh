@@ -188,9 +188,9 @@ test "$zip_failures" -eq 0
 
 # babs_prepare_yaml_config stops when it cannot write the config, instead of
 # passing on an old config or the bare template. In a run dir that cannot be
-# written to, a read-only old config cannot be replaced (cp fails), and a
-# writable one can be copied over but not edited (sed -i needs a new file in
-# that dir). Skipped when the dir stays writable (running as root).
+# written to, a read-only old config cannot be replaced (cp fails; the sed
+# check after it stops this case too), and a writable one can be copied over
+# but not edited (sed -i needs a new file in that dir). Skipped when the dir stays writable (running as root).
 render_failures=0
 ro_dir="$TEST_TMPDIR/ro_run_dir"
 mkdir -p "$ro_dir"

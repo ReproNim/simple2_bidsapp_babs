@@ -49,7 +49,9 @@ case "${1:-}" in
             shift
         done
         echo "babs-init container_name=${name}" >> "$STUB_DIR/calls.log" ;;
-    submit) echo "babs-submit" >> "$STUB_DIR/calls.log" ;;
+    submit)
+        echo "babs-submit" >> "$STUB_DIR/calls.log"
+        [ -z "${STUB_SUBMIT_FAIL:-}" ] || exit 1 ;;
 esac
 exit 0
 EOF
@@ -71,6 +73,10 @@ case "${1:-}" in
             shift
         done
         echo "containers-add image=$(cat "$url") name=${name}" >> "$STUB_DIR/calls.log" ;;
+    run-procedure) [ -z "${STUB_TEXT2GIT_FAIL:-}" ] || exit 1 ;;
+    push)
+        echo "datalad-push" >> "$STUB_DIR/calls.log"
+        [ -z "${STUB_PUSH_FAIL:-}" ] || exit 1 ;;
 esac
 exit 0
 EOF
@@ -161,6 +167,8 @@ $OUTPUT"
     fi
     want="containers-add image=${app}_bidsapp-9.8.7.sif name=${app}-bidsapp-9-8-7
 babs-init container_name=${app}-bidsapp-9-8-7
+datalad-push
+datalad-push
 babs-submit"
     if [ "$(calls)" != "$want" ]; then
         fail "$script with ${version_var}=9.8.7 registered or initialised the wrong thing.
@@ -267,6 +275,39 @@ $(calls)"
 $(calls)"
     fi
 
+    # Without SCRATCH_DIR_COMPUTE the compute space cannot be made, and the
+    # run stops before babs.
+    CASE_ENV_DROP=SCRATCH_DIR_COMPUTE run_wrapper "${app}_nocompute" "$script" "9.8.7" "${version_var}=9.8.7"
+    if [ "$STATUS" -eq 0 ] || grep -q '^babs-init' "$CASE_DIR/stub/calls.log"; then
+        fail "$script ran without SCRATCH_DIR_COMPUTE in .env (exit $STATUS):
+$(calls)"
+    fi
+
+    # A relative BABS_OUTPUT_DIR is refused: the wrapper changes directory
+    # before babs init, so it would be checked in one place and used in another.
+    run_wrapper "${app}_relout" "$script" "9.8.7" "${version_var}=9.8.7" BABS_OUTPUT_DIR=relative/project
+    if [ "$STATUS" -eq 0 ] || [ -n "$(calls)" ]; then
+        fail "$script accepted a relative BABS_OUTPUT_DIR (exit $STATUS):
+$(calls)"
+    fi
+
+    # A failed push of the text2git commit stops the run before submit, and a
+    # failed babs submit makes the run fail.
+    run_wrapper "${app}_pushfail" "$script" "9.8.7" "${version_var}=9.8.7" STUB_PUSH_FAIL=1
+    if [ "$STATUS" -eq 0 ] || grep -q '^babs-submit' "$CASE_DIR/stub/calls.log"; then
+        fail "$script went on after the push to the RIA siblings failed (exit $STATUS):
+$(calls)"
+    fi
+    run_wrapper "${app}_t2gfail" "$script" "9.8.7" "${version_var}=9.8.7" STUB_TEXT2GIT_FAIL=1
+    if [ "$STATUS" -eq 0 ] || grep -qE '^(datalad-push|babs-submit)' "$CASE_DIR/stub/calls.log"; then
+        fail "$script went on after text2git failed (exit $STATUS):
+$(calls)"
+    fi
+    run_wrapper "${app}_submitfail" "$script" "9.8.7" "${version_var}=9.8.7" STUB_SUBMIT_FAIL=1
+    if [ "$STATUS" -eq 0 ] || [[ "$OUTPUT" == *"Script completed"* ]]; then
+        fail "$script reported success after babs submit failed (exit $STATUS)"
+    fi
+
     # A failed babs init stops the run: nothing is submitted.
     run_wrapper "${app}_initfail" "$script" "9.8.7" "${version_var}=9.8.7" STUB_INIT_FAIL=1
     if [ "$STATUS" -eq 0 ] || grep -q '^babs-submit' "$CASE_DIR/stub/calls.log"; then
@@ -282,8 +323,9 @@ $(calls)"
         mriqc-nidm) scratch_var=SCRATCH_DIR_MRIQC ;;
     esac
     CASE_ENV_DROP="$scratch_var" run_wrapper "${app}_noscratch" "$script" "9.8.7" "${version_var}=9.8.7"
-    if [ "$STATUS" -eq 0 ] || [ -n "$(calls)" ] || [ -n "$(ls -A "$CASE_DIR/cwd" | grep -vx '\.env')" ]; then
-        fail "$script ran without ${scratch_var} in .env (exit $STATUS):
+    if [ "$STATUS" -eq 0 ] || [ -n "$(calls)" ] || [ -n "$(ls -A "$CASE_DIR/cwd" | grep -vx '\.env')" ] \
+        || [[ "$OUTPUT" != *"${scratch_var} is not set"* ]]; then
+        fail "$script ran without ${scratch_var} in .env, or did not name it (exit $STATUS):
 $(calls)
 $(ls -A "$CASE_DIR/cwd")"
     fi
