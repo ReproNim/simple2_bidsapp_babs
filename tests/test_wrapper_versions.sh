@@ -33,13 +33,13 @@ case "${1:-}" in
             echo "refused babs-init: $project exists" >> "$STUB_DIR/calls.log"
             exit 1
         fi
-        # A failed init may leave part of the project behind.
+        # A failed init may leave an empty project dir behind.
         if [ -n "${STUB_INIT_FAIL:-}" ]; then
             mkdir -p "$project"
             echo "failed babs-init" >> "$STUB_DIR/calls.log"
             exit 1
         fi
-        mkdir -p "$project"
+        mkdir -p "$project/.babs"
         name=""
         while [ $# -gt 0 ]; do
             case "$1" in
@@ -76,7 +76,8 @@ case "${1:-}" in
     run-procedure) [ -z "${STUB_TEXT2GIT_FAIL:-}" ] || exit 1 ;;
     push)
         echo "datalad-push" >> "$STUB_DIR/calls.log"
-        [ -z "${STUB_PUSH_FAIL:-}" ] || exit 1 ;;
+        # STUB_PUSH_FAIL names the sibling whose push fails.
+        [ -z "${STUB_PUSH_FAIL:-}" ] || [ "$3" != "$STUB_PUSH_FAIL" ] || exit 1 ;;
 esac
 exit 0
 EOF
@@ -293,19 +294,42 @@ $(calls)"
 
     # A failed push of the text2git commit stops the run before submit, and a
     # failed babs submit makes the run fail.
-    run_wrapper "${app}_pushfail" "$script" "9.8.7" "${version_var}=9.8.7" STUB_PUSH_FAIL=1
-    if [ "$STATUS" -eq 0 ] || grep -q '^babs-submit' "$CASE_DIR/stub/calls.log"; then
-        fail "$script went on after the push to the RIA siblings failed (exit $STATUS):
+    for sibling in input output; do
+        run_wrapper "${app}_pushfail_${sibling}" "$script" "9.8.7" "${version_var}=9.8.7" STUB_PUSH_FAIL="$sibling"
+        if [ "$STATUS" -eq 0 ] || grep -q '^babs-submit' "$CASE_DIR/stub/calls.log"; then
+            fail "$script went on after the push to the ${sibling} sibling failed (exit $STATUS):
 $(calls)"
-    fi
+        fi
+    done
     run_wrapper "${app}_t2gfail" "$script" "9.8.7" "${version_var}=9.8.7" STUB_TEXT2GIT_FAIL=1
     if [ "$STATUS" -eq 0 ] || grep -qE '^(datalad-push|babs-submit)' "$CASE_DIR/stub/calls.log"; then
         fail "$script went on after text2git failed (exit $STATUS):
 $(calls)"
     fi
-    run_wrapper "${app}_submitfail" "$script" "9.8.7" "${version_var}=9.8.7" STUB_SUBMIT_FAIL=1
-    if [ "$STATUS" -eq 0 ] || [[ "$OUTPUT" == *"Script completed"* ]]; then
-        fail "$script reported success after babs submit failed (exit $STATUS)"
+    run_wrapper "${app}_submitfail" "$script" "9.8.7" "${version_var}=9.8.7" STUB_SUBMIT_FAIL=1 BABS_SUBMIT_COUNT=2
+    if [ "$STATUS" -eq 0 ] || [[ "$OUTPUT" == *"Script completed"* ]] \
+        || [[ "$OUTPUT" != *"&& babs submit --count 2"* ]]; then
+        fail "$script reported success after babs submit failed, or its remedy dropped BABS_SUBMIT_COUNT (exit $STATUS):
+$OUTPUT"
+    fi
+
+    # What is at the output path decides the message: an empty dir (a babs
+    # init that did not finish) is named with rmdir; a dir that is not a
+    # project (here the site's derivatives dir) is left alone, with no
+    # command that would remove it.
+    mkdir -p "$TEST_TMPDIR/sand box/${app}_leftover/study/study-TEST/site-A/derivatives/babs-${app}"
+    run_wrapper "${app}_leftover" "$script" "9.8.7" "${version_var}=9.8.7"
+    if [ "$STATUS" -eq 0 ] || [ -n "$(calls)" ] || [[ "$OUTPUT" != *"rmdir"* ]]; then
+        fail "$script over an empty leftover project dir (exit $STATUS) did not name rmdir:
+$OUTPUT"
+    fi
+    derivs="$CASE_DIR/study/study-TEST/site-A/derivatives"
+    mkdir -p "$derivs/other-app"
+    run_wrapper "${app}_notproject" "$script" "9.8.7" "${version_var}=9.8.7" BABS_OUTPUT_DIR="$derivs"
+    if [ "$STATUS" -eq 0 ] || [ -n "$(calls)" ] || [[ "$OUTPUT" != *"is not a BABS project"* ]] \
+        || [[ "$OUTPUT" == *"rmdir"* ]] || [[ "$OUTPUT" == *"rm -"* ]] || [[ "$OUTPUT" == *"babs submit"* ]]; then
+        fail "$script with BABS_OUTPUT_DIR at a dir that is not a project (exit $STATUS) gave the wrong advice:
+$OUTPUT"
     fi
 
     # A failed babs init stops the run: nothing is submitted.

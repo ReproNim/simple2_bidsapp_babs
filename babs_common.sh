@@ -472,10 +472,20 @@ babs_check_no_project() {
         exit 1
     fi
     if [ -e "$output_dir" ] || [ -L "$output_dir" ]; then
-        echo "ERROR: ${output_dir} already exists: a BABS project, or what a babs init that did not finish left behind." >&2
-        echo "  To submit more of the project's jobs: cd \"${output_dir}\" && babs submit" >&2
-        echo "  If babs init did not finish there (babs submit says to run babs init first), remove the directory and run the wrapper again." >&2
-        echo "  To build a new project with this run's settings, set BABS_OUTPUT_DIR to a new absolute path." >&2
+        # babs init makes .babs/ in the project once it has started; any other
+        # directory here is not one, and may hold other work.
+        if [ -d "$output_dir/.babs" ] && [ ! -L "$output_dir" ]; then
+            echo "ERROR: a BABS project already exists at ${output_dir}." >&2
+            echo "  To submit more of its jobs: cd \"${output_dir}\" && babs submit" >&2
+            echo "  To build a new project with this run's settings, set BABS_OUTPUT_DIR to a new absolute path." >&2
+        elif [ -d "$output_dir" ] && [ ! -L "$output_dir" ] && [ -z "$(ls -A "$output_dir" 2>/dev/null)" ]; then
+            echo "ERROR: ${output_dir} exists and is empty, as a babs init that did not finish can leave it." >&2
+            echo "  Remove it with: rmdir \"${output_dir}\"" >&2
+            echo "  then run the wrapper again, or set BABS_OUTPUT_DIR to a new absolute path." >&2
+        else
+            echo "ERROR: ${output_dir} already exists and is not a BABS project (it has no .babs/)." >&2
+            echo "  Set BABS_OUTPUT_DIR to an absolute path that does not exist yet." >&2
+        fi
         exit 1
     fi
 }
@@ -551,6 +561,10 @@ babs_init_and_submit() {
         echo "Applying text2git so .ttl/.json/.tsv land in git, not annex..."
         if ! datalad run-procedure -d "${output_dir}" cfg_text2git; then
             echo "ERROR: text2git could not be applied to ${output_dir}; nothing was submitted." >&2
+            echo "  After fixing the cause, in the project run:" >&2
+            echo "    datalad run-procedure cfg_text2git" >&2
+            echo "    datalad push --to input --data nothing && datalad push --to output --data nothing" >&2
+            echo "  and then babs submit." >&2
             exit 1
         fi
 
@@ -566,6 +580,9 @@ babs_init_and_submit() {
         echo "Publishing the text2git commit to the RIA siblings..."
         if ! datalad push --to input --data nothing || ! datalad push --to output --data nothing; then
             echo "ERROR: the text2git commit could not be pushed to the RIA siblings of ${output_dir}; nothing was submitted." >&2
+            echo "  After fixing the cause, in the project run:" >&2
+            echo "    datalad push --to input --data nothing && datalad push --to output --data nothing" >&2
+            echo "  and then babs submit." >&2
             exit 1
         fi
     fi
@@ -617,6 +634,8 @@ babs_init_and_submit() {
         fi
         submit_args=( --count "$BABS_SUBMIT_COUNT" )
     fi
+    # The command to submit this run's jobs by hand, keeping the ramp.
+    local submit_cmd="cd \"${output_dir}\" && babs submit${BABS_SUBMIT_COUNT:+ --count ${BABS_SUBMIT_COUNT}}"
 
     if [ "$check_setup_ok" -eq 1 ]; then
         if [ -n "${BABS_SUBMIT_COUNT:-}" ]; then
@@ -626,7 +645,7 @@ babs_init_and_submit() {
             echo "Submitting all jobs..."
         fi
         if ! babs submit ${submit_args[@]+"${submit_args[@]}"}; then
-            echo "ERROR: babs submit failed for ${output_dir}. Review the errors above, then submit with: cd \"${output_dir}\" && babs submit" >&2
+            echo "ERROR: babs submit failed for ${output_dir}. Review the errors above, then submit with: ${submit_cmd}" >&2
             exit 1
         fi
     else
@@ -634,7 +653,7 @@ babs_init_and_submit() {
         echo "The project is built; nothing was submitted. If this is the known"
         echo "study-layout check_setup bug (FileNotFoundError on"
         echo "'<project>/inputs/data'), or once you have reviewed the errors, submit with:"
-        echo "  cd \"${output_dir}\" && babs submit"
+        echo "  ${submit_cmd}"
         echo "Set BABS_SKIP_CHECK_SETUP=1 on later runs to skip the check."
         exit 1
     fi
