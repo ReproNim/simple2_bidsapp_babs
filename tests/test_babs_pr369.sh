@@ -145,6 +145,21 @@ if zip_check 0-2-2 "$zip_config"; then
     echo "ZIP_VERSION=0-2-2 was accepted although a quoted \"\${subid}\" key holds 0-2-3" >&2
     zip_failures=$((zip_failures + 1))
 fi
+# Single quotes and a space before the colon name the same key.
+for second in "    '\${subid}': \"0-2-3\"" '    ${subid} : "0-2-3"'; do
+    write_zip_lines 'zip_foldernames:' '    ${subid}: "0-2-2"' "$second"
+    if zip_check 0-2-2 "$zip_config"; then
+        echo "ZIP_VERSION=0-2-2 was accepted although a second key (${second# *}) holds 0-2-3" >&2
+        zip_failures=$((zip_failures + 1))
+    fi
+done
+# A config that is missing or cannot be read is reported as such, not as a
+# config with no zip line.
+zip_message=$( ( ZIP_VERSION=0-2-2; babs_check_zip_version "$TEST_TMPDIR/no_such.yaml" ANTS_VERSION ) 2>&1 ) && zip_status=0 || zip_status=$?
+if [ "$zip_status" -eq 0 ] || [[ "$zip_message" != *"cannot read the config"* ]]; then
+    echo "a missing config gave exit $zip_status and: $zip_message" >&2
+    zip_failures=$((zip_failures + 1))
+fi
 # A commented-out zip line is not the zip line.
 write_zip_lines 'zip_foldernames:' '    # ${subid}: "0-2-3"' '    ${subid}: "0-2-2"'
 if zip_check 0-2-3 "$zip_config"; then
@@ -170,5 +185,34 @@ for v in 0.2.2 0-2 0-2-2rc1; do
     fi
 done
 test "$zip_failures" -eq 0
+
+# babs_prepare_yaml_config stops when it cannot write the config, instead of
+# passing on an old config or the bare template. In a run dir that cannot be
+# written to, a read-only old config cannot be replaced (cp fails), and a
+# writable one can be copied over but not edited (sed -i needs a new file in
+# that dir). Skipped when the dir stays writable (running as root).
+render_failures=0
+ro_dir="$TEST_TMPDIR/ro_run_dir"
+mkdir -p "$ro_dir"
+for old_mode in a-w u+w; do
+    echo 'old: "nidm_4.5.0"' > "$ro_dir/config.yaml"
+    chmod "$old_mode" "$ro_dir/config.yaml"
+    chmod a-w "$ro_dir"
+    if [ -w "$ro_dir" ]; then
+        chmod u+w "$ro_dir"
+        echo "skipping the unwritable run dir case: the dir stays writable" >&2
+        break
+    fi
+    render_message=$( ( babs_prepare_yaml_config "$REPO_ROOT/config_mriqc-nidm.yaml" "$ro_dir/config.yaml" \
+        "BIDS_ORIGIN=/tmp/BIDS" "NIDM_ORIGIN=/tmp/NIDM" "COMPUTE_SPACE=/tmp/compute" "RUN_DATE=260722" ) 2>&1 ) \
+        && render_status=0 || render_status=$?
+    chmod u+w "$ro_dir" "$ro_dir/config.yaml"
+    if [ "$render_status" -eq 0 ] || [[ "$render_message" != *"cannot write the config"* ]] \
+        || [[ "$render_message" == *"YAML config file created"* ]]; then
+        echo "rendering over a config ($old_mode) in an unwritable run dir gave exit $render_status and: $render_message" >&2
+        render_failures=$((render_failures + 1))
+    fi
+done
+test "$render_failures" -eq 0
 
 echo "BABS PR #369 configuration checks passed"

@@ -111,11 +111,11 @@ The harvest script checks this up front and prints the exact command when it's m
 
 Where things land:
 
-- **BABS project** (the deliverable): `<DATALAD_SET_DIR>/<study>/site-<SITE>/derivatives/babs-<app>` — deliberately **undated**. The project's own git history records when everything happened; a date in the folder name is redundant provenance that would have to be corrected later (and BABS projects can't be renamed after `babs init` — absolute paths are baked in). If a project already exists there, `babs init` refuses, which makes redoing a site an explicit decision rather than an accident.
-- **Scratch run dir**: `<SCRATCH_DIR_app>/<study>_site-<SITE>_<RUN_DATE>/` — config copy, container dataset. Every run renders the config again from the template, so a rerun of the same site on the same `RUN_DATE` uses this run's settings (`BABS_NIDM_DERIV`, app version, paths from `.env`); edits made by hand to the config there are replaced.
+- **BABS project** (the deliverable): `<DATALAD_SET_DIR>/<study>/site-<SITE>/derivatives/babs-<app>` — deliberately **undated**. The project's own git history records when everything happened; a date in the folder name is redundant provenance that would have to be corrected later (and BABS projects can't be renamed after `babs init` — absolute paths are baked in). If a project already exists there, the wrapper stops before copying anything and prints the two ways on: `cd <project> && babs submit` to submit more of that project's jobs, or `BABS_OUTPUT_DIR` set to a new path for a new project. Redoing a site is an explicit decision rather than an accident.
+- **Scratch run dir**: `<SCRATCH_DIR_app>/<study>_site-<SITE>_<RUN_DATE>/` — config copy, container dataset. Every run renders the config again from the template, so a rerun of the same site on the same `RUN_DATE` (once its project is removed, or with `BABS_OUTPUT_DIR`) uses this run's settings (`BABS_NIDM_DERIV`, app version, paths from `.env`); edits made by hand to the config there are replaced.
 - **Log**: `<SCRATCH_DIR_app>/babs_script_<study>_site-<SITE>_<RUN_DATE>_<timestamp>.log` — everything the run printed, survives your terminal
 
-`RUN_DATE` (auto-generated as `YYMMDD`, e.g. `260827`) stamps only these per-attempt items — the scratch run dir, compute space, log file, and SLURM job — never the deliverable.
+`RUN_DATE` (auto-generated as `YYMMDD`, e.g. `260827`; set by hand it may hold letters, digits, `.`, `_` and `-`, as in `261028a`) stamps only these per-attempt items — the scratch run dir, compute space, log file, and SLURM job — never the deliverable.
 
 ### Knobs
 
@@ -125,7 +125,7 @@ All optional, all environment variables:
 |---|---|
 | `RUN_DATE=260827` | Pin the per-attempt date stamp instead of auto-generating it. |
 | `BABS_OUTPUT_DIR=/path` | Put the project somewhere other than the default `derivatives/babs-<app>` — e.g. for a deliberate second run of a site whose project already exists. Must be decided before `babs init`; the project cannot be renamed afterwards. |
-| `BABS_SKIP_CHECK_SETUP=1` | **Currently required for every run.** `babs check-setup` crashes on the PR #369 study layout (it hardcodes a `inputs/data` path that no longer exists). The wrapper prints a reminder when it skips. |
+| `BABS_SKIP_CHECK_SETUP=1` | **Currently required for every run.** `babs check-setup` crashes on the PR #369 study layout (it hardcodes a `inputs/data` path that no longer exists). The wrapper prints a reminder when it skips. Without it the project is built and nothing is submitted; submit it with `cd <project> && babs submit`. |
 | `BABS_SUBMIT_COUNT=N` | Submit only the first N jobs — a controlled ramp for when an app's memory/time needs are unverified. Measure the first completions, adjust the config, then `babs submit` the rest into the same project. |
 | `BABS_LIST_SUB_FILE=/path.csv` | Restrict the project to the subjects in a CSV — `sub_id` column, plus `ses_id` for session-level projects. For pilots and re-runs, and **effectively required for any site where some subjects/sessions lack the required modality**: babs does *not* apply the config's `required_files` when it builds the inclusion list ([babs#314](https://github.com/PennLINC/babs/issues/314)), so without a pre-computed list every `sub-*/ses-*` directory becomes a job, including ones with no T1w that can only fail. Build the list by globbing the raw dataset (e.g. keep pairs matching `anat/*_T1w.nii*`). |
 | `MRIQC_MAX_VOXEL_SIZE=2` | mriqc-nidm only, 0.1.3 or later: pass `--max-voxel-size`, leaving T1w/T2w images with a voxel dimension above that many mm out of MRIQC. Must be a positive number. Unset: every image is rated. See [The container image](#3-the-container-image) for why UCLA_Long needs it. |
@@ -200,7 +200,7 @@ Moving to a new PyNIDM release (e.g. 5.0.0) therefore means: regenerate each sit
 
 ## Adding a new BIDS App
 
-1. Create `config_<app>-nidm.yaml` (start from an existing one). Its `zip_foldernames` must hold exactly one line, `${subid}: "${ZIP_VERSION}"`; the wrapper stops otherwise.
+1. Create `config_<app>-nidm.yaml` (start from an existing one). Its `zip_foldernames` must hold exactly one `${subid}` line, `${subid}: "${ZIP_VERSION}"`; the wrapper stops otherwise.
 2. Create `<app>-nidm_babs_script.sh` from an existing wrapper — the app-specific part is just the block of variables at the top: `APP_NAME`, `SCRATCH_DIR`, `CONTAINER_DS_NAME`, `CONTAINER_NAME`, `SIF_FILENAME`, `SIF_ALT_PATHS`.
 3. Add the matching `SCRATCH_DIR_<APP>` to `.env`.
 4. Add the wrapper and its version variable to the list in `tests/test_wrapper_versions.sh`, and its `SCRATCH_DIR_<APP>` to the `.env` that test writes.
