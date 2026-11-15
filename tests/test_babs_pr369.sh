@@ -52,9 +52,16 @@ for template in "$REPO_ROOT"/config_*-nidm.yaml; do
                 min_failures=$((min_failures + 1))
             fi
         done
-        # The mriqc wrapper applies the floor.
-        if ! grep -q '^babs_require_min_version MRIQC_VERSION "$MRIQC_VERSION" 0\.1\.3 ' "$REPO_ROOT/mriqc-nidm_babs_script.sh"; then
-            echo "mriqc-nidm_babs_script.sh does not require MRIQC_VERSION 0.1.3 or later" >&2
+        # The mriqc wrapper applies the floor before anything else runs: with
+        # MRIQC_VERSION=0.1.2 it stops with the floor's message and does not
+        # get as far as choosing the run date.
+        floor_dir="$TEST_TMPDIR/floor_cwd"
+        mkdir -p "$floor_dir"
+        floor_out=$(cd "$floor_dir" && env -i PATH=/usr/bin:/bin HOME="$floor_dir" MRIQC_VERSION=0.1.2 \
+            bash "$REPO_ROOT/mriqc-nidm_babs_script.sh" A study-TEST 2>&1) && floor_status=0 || floor_status=$?
+        if [ "$floor_status" -eq 0 ] || [[ "$floor_out" != *"needs MRIQC_VERSION 0.1.3 or later, got 0.1.2"* ]] \
+            || [[ "$floor_out" == *"Using RUN_DATE"* ]]; then
+            echo "mriqc-nidm_babs_script.sh with MRIQC_VERSION=0.1.2 (exit $floor_status) did not stop at the 0.1.3 floor: $floor_out" >&2
             min_failures=$((min_failures + 1))
         fi
         test "$min_failures" -eq 0
