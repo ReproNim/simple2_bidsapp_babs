@@ -173,6 +173,27 @@ babs_setup_env() {
     babs_require_pr369
 }
 
+# Copy an app image into the run directory and stop if the copy is not
+# complete. A copy cut short by a full disk or a quota would otherwise leave
+# a partial .sif that datalad containers-add registers for every job.
+# Usage: babs_copy_image <source> <destination>
+babs_copy_image() {
+    local src="$1" dest="$2"
+    local src_size dest_size
+    if ! cp "$src" "$dest"; then
+        rm -f "$dest"
+        echo "ERROR: copying ${src} to ${dest} failed; removed the partial file." >&2
+        exit 1
+    fi
+    src_size=$(wc -c < "$src")
+    dest_size=$(wc -c < "$dest" 2>/dev/null || echo missing)
+    if [ "$src_size" != "$dest_size" ]; then
+        rm -f "$dest"
+        echo "ERROR: copy of ${src} is ${dest_size} bytes, expected ${src_size}; removed the partial file." >&2
+        exit 1
+    fi
+}
+
 # Generic container setup
 # Usage: babs_setup_container <app_name> <container_ds_name> <container_name> <sif_filename> [sif_alt_paths...]
 babs_setup_container() {
@@ -206,13 +227,13 @@ babs_setup_container() {
         # Try BASE_DIR first
         if [ -f "${BASE_DIR}/${sif_filename}" ]; then
             echo "Copying ${sif_filename} from BASE_DIR"
-            cp "${BASE_DIR}/${sif_filename}" .
+            babs_copy_image "${BASE_DIR}/${sif_filename}" "${PWD}/${sif_filename}"
         else
             # Try alternative paths
             for alt_path in "${sif_alt_paths[@]}"; do
                 if [ -f "${alt_path}/${sif_filename}" ]; then
                     echo "Copying ${sif_filename} from ${alt_path}"
-                    cp "${alt_path}/${sif_filename}" .
+                    babs_copy_image "${alt_path}/${sif_filename}" "${PWD}/${sif_filename}"
                     break
                 fi
             done
