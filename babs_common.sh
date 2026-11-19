@@ -179,19 +179,25 @@ babs_setup_env() {
 # Usage: babs_copy_image <source> <destination>
 babs_copy_image() {
     local src="$1" dest="$2"
-    local src_size dest_size
-    if ! cp "$src" "$dest"; then
-        rm -f "$dest"
+    local tmp="${dest}.partial"
+    local src_size tmp_size
+    # Copy under a temporary name and rename only a complete copy, so a copy
+    # that is killed (time limit, node loss) never leaves a file at the final
+    # name for a rerun in the same run directory to accept.
+    rm -f "$tmp"
+    if ! cp "$src" "$tmp"; then
+        rm -f "$tmp"
         echo "ERROR: copying ${src} to ${dest} failed; removed the partial file." >&2
         exit 1
     fi
     src_size=$(wc -c < "$src")
-    dest_size=$(wc -c < "$dest" 2>/dev/null || echo missing)
-    if [ "$src_size" != "$dest_size" ]; then
-        rm -f "$dest"
-        echo "ERROR: copy of ${src} is ${dest_size} bytes, expected ${src_size}; removed the partial file." >&2
+    tmp_size=$(wc -c < "$tmp" 2>/dev/null || echo missing)
+    if [ "$src_size" != "$tmp_size" ]; then
+        rm -f "$tmp"
+        echo "ERROR: copy of ${src} is ${tmp_size} bytes, expected ${src_size}; removed the partial file." >&2
         exit 1
     fi
+    mv -f "$tmp" "$dest"
 }
 
 # Generic container setup

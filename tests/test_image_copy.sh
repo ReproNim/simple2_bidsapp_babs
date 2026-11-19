@@ -12,13 +12,15 @@ STUBS="$TEST_TMPDIR/bin"
 mkdir -p "$STUBS"
 REAL_CP="$(command -v cp)"
 
-# Modes: ok (real copy), fail (partial file, exit 1), short (partial file, exit 0).
+# Modes: ok (real copy), fail (partial file, exit 1), short (partial file,
+# exit 0), kill (partial file, then SIGKILL of the calling shell, so no cleanup can run).
 cat > "$STUBS/cp" <<STUB
 #!/bin/bash
 case "\${CP_MODE:-ok}" in
     ok) exec "$REAL_CP" "\$@" ;;
     fail) head -c 10 "\$1" > "\$2"; exit 1 ;;
     short) head -c 10 "\$1" > "\$2"; exit 0 ;;
+    kill) head -c 10 "\$1" > "\$2"; kill -9 \$PPID ;;
 esac
 STUB
 chmod +x "$STUBS/cp"
@@ -65,6 +67,23 @@ for mode in fail short; do
     ! grep -q containers-add "$TEST_TMPDIR/calls.log" \
         || { echo "FAIL: $mode copy reached datalad containers-add"; exit 1; }
 done
+
+# A killed copy leaves no file at the final name, so a rerun cannot mistake
+# it for a finished image.
+run_case kill run_kill
+[ "$ec" -ne 0 ] || { echo "FAIL: killed copy exited 0"; exit 1; }
+[ ! -e "$TEST_TMPDIR/run_kill/app.sif" ] \
+    || { echo "FAIL: killed copy left a file at app.sif"; exit 1; }
+
+# A stale .partial from an earlier killed run does not block a fresh copy.
+mkdir -p "$TEST_TMPDIR/run_stale"
+echo stale > "$TEST_TMPDIR/run_stale/app.sif.partial"
+run_case ok run_stale
+[ "$ec" -eq 0 ] || { echo "FAIL: stale .partial blocked the copy"; exit 1; }
+grep -q containers-add "$TEST_TMPDIR/calls.log" \
+    || { echo "FAIL: copy after a stale .partial did not reach containers-add"; exit 1; }
+[ ! -e "$TEST_TMPDIR/run_stale/app.sif.partial" ] \
+    || { echo "FAIL: stale .partial was left behind"; exit 1; }
 
 # A complete copy goes through to containers-add.
 run_case ok run_ok
