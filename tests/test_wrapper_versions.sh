@@ -12,19 +12,34 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TEST_TMPDIR="$(mktemp -d)"
 trap 'rm -rf "$TEST_TMPDIR"' EXIT
 
+# run_wrapper reads these per call; a value exported by the caller must not
+# reach every case.
+unset CASE_SITE CASE_STUDY CASE_ENV_DROP
+
 STUBS="$TEST_TMPDIR/bin"
 FAKE_HOME="$TEST_TMPDIR/home"
 mkdir -p "$STUBS" "$FAKE_HOME"
 
 # babs: report a version that passes the layout check, and record what `init`
-# was given. `init` creates the project directory, as the wrapper enters it.
+# was given and that `submit` ran. `init` creates the project directory, as
+# the wrapper enters it, and refuses one that exists, as babs does.
 cat > "$STUBS/babs" <<'EOF'
 #!/bin/bash
 case "${1:-}" in
     --version) echo "babs v0.5.5.dev32+gea5d6f023" ;;
     init)
         project="${@: -1}"
-        mkdir -p "$project"
+        if [ -e "$project" ]; then
+            echo "refused babs-init: $project exists" >> "$STUB_DIR/calls.log"
+            exit 1
+        fi
+        # A failed init may leave an empty project dir behind.
+        if [ -n "${STUB_INIT_FAIL:-}" ]; then
+            mkdir -p "$project"
+            echo "failed babs-init" >> "$STUB_DIR/calls.log"
+            exit 1
+        fi
+        mkdir -p "$project/.babs"
         name=""
         while [ $# -gt 0 ]; do
             case "$1" in
@@ -34,6 +49,10 @@ case "${1:-}" in
             shift
         done
         echo "babs-init container_name=${name}" >> "$STUB_DIR/calls.log" ;;
+    check-setup) [ -z "${STUB_CHECKSETUP_FAIL:-}" ] || exit 1 ;;
+    submit)
+        echo "babs-submit" >> "$STUB_DIR/calls.log"
+        [ -z "${STUB_SUBMIT_FAIL:-}" ] || exit 1 ;;
 esac
 exit 0
 EOF
@@ -55,6 +74,11 @@ case "${1:-}" in
             shift
         done
         echo "containers-add image=$(cat "$url") name=${name}" >> "$STUB_DIR/calls.log" ;;
+    run-procedure) [ -z "${STUB_TEXT2GIT_FAIL:-}" ] || exit 1 ;;
+    push)
+        echo "datalad-push" >> "$STUB_DIR/calls.log"
+        # STUB_PUSH_FAIL names the sibling whose push fails.
+        [ -z "${STUB_PUSH_FAIL:-}" ] || [ "$3" != "$STUB_PUSH_FAIL" ] || exit 1 ;;
 esac
 exit 0
 EOF
@@ -77,14 +101,17 @@ fail() {
 # Usage: run_wrapper <case> <script> <image versions, space-separated; "plain"
 #        is the unversioned <app>_bidsapp.sif> [VAR=value ...]
 # Sets CASE_DIR, STATUS and OUTPUT. Each image file's content is its own name.
+# The site is $CASE_SITE (A by default) and the study $CASE_STUDY (study-TEST
+# by default); $CASE_ENV_DROP names a variable to leave out of the .env.
 run_wrapper() {
-    local case_name="$1" script="$2" images="$3"
+    local case_name="$1" script="$2" images="$3" site="${CASE_SITE:-A}"
+    local study="${CASE_STUDY:-study-TEST}"
     shift 3
     local app="${script%_babs_script.sh}"
     # The space keeps every path the wrappers get, .env values included, honest.
     CASE_DIR="$TEST_TMPDIR/sand box/$case_name"
     mkdir -p "$CASE_DIR"/{cwd,base,stub,scratch/ants,scratch/fs,scratch/mriqc,scratch/compute} \
-        "$CASE_DIR/study/study-TEST/site-A/sourcedata/raw"
+        "$CASE_DIR/study/study-TEST/site-${site}/sourcedata/raw"
     local v
     for v in $images; do
         if [ "$v" = plain ]; then
@@ -103,16 +130,23 @@ run_wrapper() {
         SCRATCH_DIR_COMPUTE "$CASE_DIR/scratch/compute" \
         DATALAD_SET_DIR "$CASE_DIR/study" \
         FS_LICENSE "$FAKE_HOME/license.txt" > "$CASE_DIR/cwd/.env"
+    if [ -n "${CASE_ENV_DROP:-}" ]; then
+        sed -i "/^${CASE_ENV_DROP}=/d" "$CASE_DIR/cwd/.env"
+    fi
     : > "$CASE_DIR/stub/calls.log"
     # A clean environment: no site modules, no caller's versions or .env. The
     # command substitution also waits for the wrapper's own `tee` to finish.
     STATUS=0
     OUTPUT=$(cd "$CASE_DIR/cwd" && env -i PATH="$STUBS:/usr/bin:/bin" HOME="$FAKE_HOME" \
         RUN_DATE=260101 STUB_DIR="$CASE_DIR/stub" "$@" \
-        bash "$REPO_ROOT/$script" A study-TEST 2>&1) || STATUS=$?
+        bash "$REPO_ROOT/$script" "$site" "$study" 2>&1) || STATUS=$?
 }
 
 calls() { cat "$CASE_DIR/stub/calls.log"; }
+
+# Remove the project an earlier run of this case made for a site, as an
+# operator does before redoing the site under the default output dir.
+rm_project() { rm -rf "$CASE_DIR/study/study-TEST/site-${1:-A}/derivatives/babs-${app}"; }
 
 # One entry per wrapper: "<script> <its version variable>". The check after
 # the loop fails for a wrapper in the repo that has no entry here.
@@ -134,7 +168,10 @@ for entry in "${wrappers[@]}"; do
 $OUTPUT"
     fi
     want="containers-add image=${app}_bidsapp-9.8.7.sif name=${app}-bidsapp-9-8-7
-babs-init container_name=${app}-bidsapp-9-8-7"
+babs-init container_name=${app}-bidsapp-9-8-7
+datalad-push
+datalad-push
+babs-submit"
     if [ "$(calls)" != "$want" ]; then
         fail "$script with ${version_var}=9.8.7 registered or initialised the wrong thing.
 want:
@@ -158,18 +195,210 @@ $(grep -A1 '^zip_foldernames' "$CASE_DIR/stub/config.yaml" 2>/dev/null || echo '
 $(calls)"
     fi
 
-    # A second run on the same RUN_DATE with another version finds the first
-    # run's config in the run directory. The wrapper must stop before babs
-    # instead of zipping 9.8.7's outputs under 9.8.6.
-    run_wrapper "${app}_reused" "$script" "9.8.6 9.8.7" "${version_var}=9.8.6"
-    if [ "$STATUS" -ne 0 ] || [ "$(grep -c '^babs-init' "$CASE_DIR/stub/calls.log")" -ne 1 ]; then
-        fail "$script did not complete its first run with ${version_var}=9.8.6 (exit $STATUS):
+    # A second run of the same site on the same RUN_DATE finds the first run's
+    # project. It must stop before it copies an image or calls babs, and say
+    # how to submit into that project: babs init refuses an existing project,
+    # and a babs submit there would run the first run's version and inputs.
+    run_wrapper "${app}_rerun" "$script" "9.8.6 9.8.7" "${version_var}=9.8.6"
+    if [ "$STATUS" -ne 0 ] || [ "$(grep -c '^babs-init' "$CASE_DIR/stub/calls.log")" -ne 1 ] \
+        || ! grep -q 'derivatives/nidm_4\.5\.0"' "$CASE_DIR/stub/config.yaml" 2>/dev/null; then
+        fail "$script did not complete its first run with ${version_var}=9.8.6 on nidm_4.5.0 (exit $STATUS):
 $(calls)"
     fi
-    run_wrapper "${app}_reused" "$script" "9.8.6 9.8.7" "${version_var}=9.8.7"
-    if [ "$STATUS" -eq 0 ] || grep -q '^babs-init' "$CASE_DIR/stub/calls.log"; then
-        fail "$script reused a config made for 9.8.6 when run with ${version_var}=9.8.7 (exit $STATUS):
+    run_wrapper "${app}_rerun" "$script" "9.8.6 9.8.7" "${version_var}=9.8.7" BABS_NIDM_DERIV=nidm_5.0.0
+    if [ "$STATUS" -eq 0 ] || [ -n "$(calls)" ] \
+        || [[ "$OUTPUT" != *"babs-${app}\" && babs submit"* ]]; then
+        fail "$script rerun over site A's existing project (exit $STATUS) did not stop before babs with the command to submit into it:
+$(calls)
+$OUTPUT"
+    fi
+
+    # With the project removed, the rerun finds the first run's config in the
+    # run directory. It must render its own: zip under 9.8.7, not 9.8.6, and
+    # read the NIDM derivative it was given, not the first run's.
+    rm_project
+    run_wrapper "${app}_rerun" "$script" "9.8.6 9.8.7" "${version_var}=9.8.7" BABS_NIDM_DERIV=nidm_5.0.0
+    if [ "$STATUS" -ne 0 ] \
+        || ! grep -qx '    ${subid}: "9-8-7"' "$CASE_DIR/stub/config.yaml" 2>/dev/null \
+        || ! grep -q 'derivatives/nidm_5\.0\.0"' "$CASE_DIR/stub/config.yaml" 2>/dev/null \
+        || grep -q 'nidm_4\.5\.0' "$CASE_DIR/stub/config.yaml" 2>/dev/null; then
+        fail "$script rerun with ${version_var}=9.8.7 BABS_NIDM_DERIV=nidm_5.0.0 (exit $STATUS) did not give babs init a config of its own:
+$(grep -E 'subid|origin_url' "$CASE_DIR/stub/config.yaml" 2>/dev/null || echo '(no config reached babs init)')"
+    fi
+
+    # A read-only config left in the run dir (protecting a hand edit) is
+    # replaced, not kept with a false "created" line.
+    rerun_config=$(compgen -G "$CASE_DIR/scratch/*/study-TEST_site-A_260101/config_${app}.yaml" || true)
+    if [ -z "$rerun_config" ]; then
+        fail "$script left no config in its run dir to rerun against"
+    else
+        sed -i 's|nidm_5\.0\.0|nidm_4.5.0|' "$rerun_config"
+        chmod a-w "$rerun_config"
+        rm_project
+        run_wrapper "${app}_rerun" "$script" "9.8.6 9.8.7" "${version_var}=9.8.7" BABS_NIDM_DERIV=nidm_5.0.0
+        if [ "$STATUS" -ne 0 ] || ! grep -q 'derivatives/nidm_5\.0\.0"' "$CASE_DIR/stub/config.yaml" 2>/dev/null; then
+            fail "$script rerun over a read-only config (exit $STATUS) did not give babs init a fresh config:
+$(grep origin_url "$CASE_DIR/stub/config.yaml" 2>/dev/null || echo '(no config reached babs init)')"
+        fi
+        # A config that is a symlink is replaced, and the file it points to
+        # is left alone.
+        rm -f "$rerun_config"
+        echo "keep me" > "$CASE_DIR/link_target.yaml"
+        ln -s "$CASE_DIR/link_target.yaml" "$rerun_config"
+        rm_project
+        run_wrapper "${app}_rerun" "$script" "9.8.6 9.8.7" "${version_var}=9.8.7"
+        if [ "$STATUS" -ne 0 ] || [ "$(cat "$CASE_DIR/link_target.yaml")" != "keep me" ] || [ -L "$rerun_config" ]; then
+            fail "$script rerun over a symlinked config (exit $STATUS) wrote through the link or kept it"
+        fi
+    fi
+
+    # Site and study names and RUN_DATE go into paths: a "/" or a leading dot
+    # is refused before anything is registered.
+    for bad in "A/B" ".."; do
+        CASE_SITE="$bad" run_wrapper "${app}_badname" "$script" "9.8.7" "${version_var}=9.8.7"
+        if [ "$STATUS" -eq 0 ] || [ -n "$(calls)" ]; then
+            fail "$script accepted the site name '$bad' (exit $STATUS):
 $(calls)"
+        fi
+        CASE_STUDY="study-TEST/${bad}" run_wrapper "${app}_badname" "$script" "9.8.7" "${version_var}=9.8.7"
+        if [ "$STATUS" -eq 0 ] || [ -n "$(calls)" ]; then
+            fail "$script accepted the study name 'study-TEST/${bad}' (exit $STATUS):
+$(calls)"
+        fi
+        run_wrapper "${app}_badname" "$script" "9.8.7" "${version_var}=9.8.7" RUN_DATE="260101/${bad}"
+        if [ "$STATUS" -eq 0 ] || [ -n "$(calls)" ]; then
+            fail "$script accepted RUN_DATE=260101/${bad} (exit $STATUS):
+$(calls)"
+        fi
+    done
+    CASE_STUDY=".." run_wrapper "${app}_badname" "$script" "9.8.7" "${version_var}=9.8.7"
+    if [ "$STATUS" -eq 0 ] || [ -n "$(calls)" ]; then
+        fail "$script accepted the study name '..' (exit $STATUS):
+$(calls)"
+    fi
+
+    # Without SCRATCH_DIR_COMPUTE the compute space cannot be made, and the
+    # run stops before babs.
+    CASE_ENV_DROP=SCRATCH_DIR_COMPUTE run_wrapper "${app}_nocompute" "$script" "9.8.7" "${version_var}=9.8.7"
+    if [ "$STATUS" -eq 0 ] || grep -q '^babs-init' "$CASE_DIR/stub/calls.log"; then
+        fail "$script ran without SCRATCH_DIR_COMPUTE in .env (exit $STATUS):
+$(calls)"
+    fi
+
+    # A relative BABS_OUTPUT_DIR is refused: the wrapper changes directory
+    # before babs init, so it would be checked in one place and used in another.
+    run_wrapper "${app}_relout" "$script" "9.8.7" "${version_var}=9.8.7" BABS_OUTPUT_DIR=relative/project
+    if [ "$STATUS" -eq 0 ] || [ -n "$(calls)" ]; then
+        fail "$script accepted a relative BABS_OUTPUT_DIR (exit $STATUS):
+$(calls)"
+    fi
+
+    # A failed push of the text2git commit stops the run before submit, and a
+    # failed babs submit makes the run fail.
+    for sibling in input output; do
+        run_wrapper "${app}_pushfail_${sibling}" "$script" "9.8.7" "${version_var}=9.8.7" STUB_PUSH_FAIL="$sibling" BABS_SUBMIT_COUNT=2
+        if [ "$STATUS" -eq 0 ] || grep -q '^babs-submit' "$CASE_DIR/stub/calls.log" \
+            || [[ "$OUTPUT" != *"datalad push --to input --data nothing && datalad push --to output --data nothing"* ]] \
+            || [[ "$OUTPUT" != *"&& babs submit --count 2"* ]]; then
+            fail "$script went on after the push to the ${sibling} sibling failed (exit $STATUS):
+$(calls)"
+        fi
+    done
+    run_wrapper "${app}_t2gfail" "$script" "9.8.7" "${version_var}=9.8.7" STUB_TEXT2GIT_FAIL=1 BABS_SUBMIT_COUNT=2
+    if [ "$STATUS" -eq 0 ] || grep -qE '^(datalad-push|babs-submit)' "$CASE_DIR/stub/calls.log" \
+        || [[ "$OUTPUT" != *"datalad run-procedure cfg_text2git"* ]] \
+        || [[ "$OUTPUT" != *"&& babs submit --count 2"* ]]; then
+        fail "$script went on after text2git failed (exit $STATUS):
+$(calls)"
+    fi
+    run_wrapper "${app}_submitfail" "$script" "9.8.7" "${version_var}=9.8.7" STUB_SUBMIT_FAIL=1 BABS_SUBMIT_COUNT=2
+    if [ "$STATUS" -eq 0 ] || [[ "$OUTPUT" == *"Script completed"* ]] \
+        || [[ "$OUTPUT" != *"&& babs submit --count 2"* ]]; then
+        fail "$script reported success after babs submit failed, or its remedy dropped BABS_SUBMIT_COUNT (exit $STATUS):
+$OUTPUT"
+    fi
+
+    # A failed setup check builds the project, submits nothing, and prints
+    # the submit command with the ramp's --count.
+    run_wrapper "${app}_checkfail" "$script" "9.8.7" "${version_var}=9.8.7" STUB_CHECKSETUP_FAIL=1 BABS_SUBMIT_COUNT=2
+    if [ "$STATUS" -eq 0 ] || grep -q '^babs-submit' "$CASE_DIR/stub/calls.log" \
+        || [[ "$OUTPUT" != *"&& babs submit --count 2"* ]]; then
+        fail "$script after a failed setup check (exit $STATUS) submitted or dropped --count from its remedy:
+$OUTPUT"
+    fi
+
+    # What is at the output path decides the message: an empty dir (a babs
+    # init that did not finish) is named with rmdir; a dir that is not a
+    # project (here the site's derivatives dir) is left alone, with no
+    # command that would remove it.
+    mkdir -p "$TEST_TMPDIR/sand box/${app}_leftover/study/study-TEST/site-A/derivatives/babs-${app}"
+    run_wrapper "${app}_leftover" "$script" "9.8.7" "${version_var}=9.8.7"
+    if [ "$STATUS" -eq 0 ] || [ -n "$(calls)" ] || [[ "$OUTPUT" != *"rmdir"* ]]; then
+        fail "$script over an empty leftover project dir (exit $STATUS) did not name rmdir:
+$OUTPUT"
+    fi
+    derivs="$CASE_DIR/study/study-TEST/site-A/derivatives"
+    mkdir -p "$derivs/other-app"
+    run_wrapper "${app}_notproject" "$script" "9.8.7" "${version_var}=9.8.7" BABS_OUTPUT_DIR="$derivs"
+    if [ "$STATUS" -eq 0 ] || [ -n "$(calls)" ] || [[ "$OUTPUT" != *"is not a BABS project"* ]] \
+        || [[ "$OUTPUT" == *"rmdir"* ]] || [[ "$OUTPUT" == *"rm -"* ]] || [[ "$OUTPUT" == *"babs submit"* ]]; then
+        fail "$script with BABS_OUTPUT_DIR at a dir that is not a project (exit $STATUS) gave the wrong advice:
+$OUTPUT"
+    fi
+
+    # A failed babs init stops the run: nothing is submitted.
+    run_wrapper "${app}_initfail" "$script" "9.8.7" "${version_var}=9.8.7" STUB_INIT_FAIL=1
+    if [ "$STATUS" -eq 0 ] || grep -q '^babs-submit' "$CASE_DIR/stub/calls.log"; then
+        fail "$script went on after babs init failed (exit $STATUS):
+$(calls)"
+    fi
+
+    # Without its scratch dir in .env the wrapper stops before anything is
+    # copied or registered, instead of running in the current directory.
+    case "$app" in
+        ants-nidm) scratch_var=SCRATCH_DIR_ANTS ;;
+        freesurfer-nidm) scratch_var=SCRATCH_DIR_FS ;;
+        mriqc-nidm) scratch_var=SCRATCH_DIR_MRIQC ;;
+    esac
+    CASE_ENV_DROP="$scratch_var" run_wrapper "${app}_noscratch" "$script" "9.8.7" "${version_var}=9.8.7"
+    if [ "$STATUS" -eq 0 ] || [ -n "$(calls)" ] || [ -n "$(ls -A "$CASE_DIR/cwd" | grep -vx '\.env')" ] \
+        || [[ "$OUTPUT" != *"${scratch_var} is not set"* ]]; then
+        fail "$script ran without ${scratch_var} in .env, or did not name it (exit $STATUS):
+$(calls)
+$(ls -A "$CASE_DIR/cwd")"
+    fi
+
+    # Two sites of one study on the same RUN_DATE: the second site's babs init
+    # must read its own BIDS and NIDM inputs, not the config the first site
+    # left behind (issue #23).
+    CASE_SITE=A run_wrapper "${app}_two_sites" "$script" "9.8.7" "${version_var}=9.8.7"
+    if [ "$STATUS" -ne 0 ] || ! grep -q 'study-TEST/site-A/sourcedata/raw' "$CASE_DIR/stub/config.yaml" 2>/dev/null; then
+        fail "$script for site A (exit $STATUS) did not give babs init site A's inputs:
+$OUTPUT"
+    fi
+    CASE_SITE=B run_wrapper "${app}_two_sites" "$script" "9.8.7" "${version_var}=9.8.7"
+    # Each site writes its own log, so two sites started together do not
+    # share (and truncate) one file.
+    for s in A B; do
+        if ! compgen -G "$CASE_DIR/scratch/*/babs_script_study-TEST_site-${s}_260101_*.log" >/dev/null; then
+            fail "$script wrote no log named for study-TEST site-${s}:
+$(ls "$CASE_DIR"/scratch/*/)"
+        fi
+    done
+    if [ "$STATUS" -ne 0 ] \
+        || ! grep -q 'study-TEST/site-B/sourcedata/raw' "$CASE_DIR/stub/config.yaml" 2>/dev/null \
+        || grep -q 'site-A/' "$CASE_DIR/stub/config.yaml" 2>/dev/null; then
+        fail "$script for site B after site A on one RUN_DATE (exit $STATUS) did not give babs init site B's inputs:
+$(grep 'origin_url' "$CASE_DIR/stub/config.yaml" 2>/dev/null || echo '(no config reached babs init)')"
+    fi
+    # Each site has its own run dir, so site A's config still records site A's
+    # run after site B's.
+    a_config=$(compgen -G "$CASE_DIR/scratch/*/study-TEST_site-A_260101/config_${app}.yaml" || true)
+    b_config=$(compgen -G "$CASE_DIR/scratch/*/study-TEST_site-B_260101/config_${app}.yaml" || true)
+    if [ -z "$a_config" ] || [ -z "$b_config" ] \
+        || ! grep -q 'study-TEST/site-A/sourcedata/raw' "$a_config"; then
+        fail "$script did not keep one run dir per site: after sites A and B on one RUN_DATE the scratch dir holds:
+$(ls "$CASE_DIR"/scratch/*/)"
     fi
 
     # A version that is not X.Y.Z is refused even when an image of that name

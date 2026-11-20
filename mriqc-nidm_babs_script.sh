@@ -64,12 +64,15 @@ babs_setup_env
 # ============================================================================
 # Create directories
 # ============================================================================
-RUN_DIR="${SCRATCH_DIR}/${DATASET_NAME}_${RUN_DATE}"
+RUN_DIR="${SCRATCH_DIR}/${DATASET_NAME}_site-${SITE_NAME}_${RUN_DATE}"
 COMPUTE_DIR="${SCRATCH_DIR_COMPUTE}/mriqc-nidm_compute_${RUN_DATE}"
 
-mkdir -p "$RUN_DIR"
-mkdir -p "$COMPUTE_DIR"
-cd "$RUN_DIR"
+# Stop before any image is copied if this site already has a project.
+OUTPUT_DIR="$(babs_study_output_dir "$DATASET_NAME" "$SITE_NAME" "mriqc-nidm")"
+babs_check_no_project "$OUTPUT_DIR"
+
+mkdir -p "$RUN_DIR" "$COMPUTE_DIR" || exit 1
+cd "$RUN_DIR" || exit 1
 echo "Current directory: $PWD"
 
 # ============================================================================
@@ -128,8 +131,6 @@ babs_check_nidm "$DATASET_NAME" "$SITE_NAME"
 # ============================================================================
 # Initialize BABS and submit
 # ============================================================================
-OUTPUT_DIR="$(babs_study_output_dir "$DATASET_NAME" "$SITE_NAME" "mriqc-nidm")"
-
 babs_init_and_submit \
     "${PWD}/${CONTAINER_DS_NAME}" \
     "$CONTAINER_NAME" \

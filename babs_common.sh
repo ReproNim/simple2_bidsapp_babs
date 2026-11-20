@@ -21,9 +21,8 @@ babs_resolve_version() {
     ZIP_VERSION="${version//./-}"
 }
 
-# A config left in RUN_DIR by an earlier attempt with the same RUN_DATE is
-# reused as-is (babs_prepare_yaml_config skips an existing file), so check it
-# zips under this run's version.
+# Check that the config just rendered from the template zips under this run's
+# version, on exactly one zip line.
 # Usage: babs_check_zip_version <config_path> <VAR_NAME>
 babs_check_zip_version() {
     local config_path="$1" var_name="$2"
@@ -38,21 +37,22 @@ babs_check_zip_version() {
         exit 1
     fi
     # Compare the zip line itself, not any quoted value in the config. There
-    # must be exactly one line with a ${subid} key, quoted or not: YAML keeps
-    # the last of two equal keys, so a second one would leave open which
-    # version babs zips under. This is a line check, not a YAML parse: it is
-    # exact for the configs the wrappers render, and a hand-edited config in
-    # another YAML style (flow mapping, a key under another section) can still
-    # get past it or be refused.
+    # must be exactly one line with a ${subid} key, in single, double or no
+    # quotes and with or without a space before the colon: YAML keeps the
+    # last of two equal keys, so a second one would leave open which version
+    # babs zips under. This is a line check, not a YAML parse: it is exact for
+    # the templates in this repo, and a template written in another YAML style
+    # (flow mapping, an explicit "? " key, a key under another section) can
+    # still get past it or be refused.
     local zip_lines zip_count
-    zip_lines=$(grep -E '^[[:space:]]*"?\$\{subid\}"?:' "$config_path" || true)
+    zip_lines=$(grep -E "^[[:space:]]*[\"']?\\\$\{subid\}[\"']?[[:space:]]*:" "$config_path" || true)
     zip_count=$(printf '%s' "$zip_lines" | grep -c . || true)
     if [ "$zip_count" -ne 1 ]; then
-        echo "ERROR: ${config_path} has ${zip_count} lines with a \${subid} key; expected one. Remove it or use a new RUN_DATE." >&2
+        echo "ERROR: ${config_path} has ${zip_count} lines with a \${subid} key; expected one. The config template's zip_foldernames must hold one line: \${subid}: \"\${ZIP_VERSION}\"." >&2
         exit 1
     fi
     if ! printf '%s\n' "$zip_lines" | grep -qE "^[[:space:]]*\\\$\{subid\}:[[:space:]]*\"${ZIP_VERSION}\"([[:space:]]+#.*)?[[:space:]]*\$"; then
-        echo "ERROR: the \${subid} line of ${config_path} is not \"${ZIP_VERSION}\": the file is from a run with another ${var_name}, or was edited. Remove it or use a new RUN_DATE." >&2
+        echo "ERROR: the \${subid} line of ${config_path} is not \"${ZIP_VERSION}\" (from ${var_name}). The config template's zip line must be \${subid}: \"\${ZIP_VERSION}\"." >&2
         exit 1
     fi
 }
@@ -72,21 +72,46 @@ babs_init_run_date() {
     if [ -z "${RUN_DATE:-}" ]; then
         RUN_DATE=$(date +%y%m%d)
     fi
+    # RUN_DATE goes into the run dir, compute space and log paths and the
+    # SLURM job name, like the site and study names babs_validate_args checks.
+    if [[ ! "$RUN_DATE" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+        echo "ERROR: RUN_DATE must start with a letter or digit and hold only letters, digits, '.', '_' and '-' (got '$RUN_DATE')" >&2
+        exit 1
+    fi
     export RUN_DATE
     echo "Using RUN_DATE: $RUN_DATE"
 }
 
 # Set up logging - redirect all further output to a log file while still showing in console
 # Usage: babs_setup_logging <scratch_dir> <app_name>
+# Call after babs_parse_args: the log is named by study and site, so two sites
+# started in the same second do not write (and truncate) one file.
 babs_setup_logging() {
     local scratch_dir="$1"
     local app_name="$2"
 
+    # An unset SCRATCH_DIR_<APP> would put the run dir at the file-system
+    # root, where mkdir fails, and leave the run in the current directory.
+    if [ -z "$scratch_dir" ]; then
+        local scratch_var
+        case "$app_name" in
+            ants-nidm) scratch_var=SCRATCH_DIR_ANTS ;;
+            freesurfer-nidm) scratch_var=SCRATCH_DIR_FS ;;
+            mriqc-nidm) scratch_var=SCRATCH_DIR_MRIQC ;;
+            *) scratch_var="the SCRATCH_DIR_* variable for ${app_name}" ;;
+        esac
+        echo "ERROR: no scratch dir for ${app_name}: ${scratch_var} is not set. Set it in .env in the directory the wrapper is started from (the repo root)." >&2
+        exit 1
+    fi
+
     # First-ever run of an app has no scratch dir yet, and this runs before
     # RUN_DIR is created -- without this, tee fails and the run has no log.
-    mkdir -p "$scratch_dir"
+    if ! mkdir -p "$scratch_dir"; then
+        echo "ERROR: cannot create the scratch dir ${scratch_dir}" >&2
+        exit 1
+    fi
 
-    LOG_FILE="${scratch_dir}/babs_script_${RUN_DATE}_$(date +%Y%m%d_%H%M%S).log"
+    LOG_FILE="${scratch_dir}/babs_script_${DATASET_NAME}_site-${SITE_NAME}_${RUN_DATE}_$(date +%Y%m%d_%H%M%S).log"
     echo "=== Script started at $(date) ===" | tee "$LOG_FILE"
     exec > >(tee -a "$LOG_FILE") 2>&1
 }
@@ -230,15 +255,19 @@ babs_prepare_yaml_config() {
     local output_path="$2"
     shift 2
 
-    if [ -f "$output_path" ]; then
-        echo "Config file already exists at $output_path, skipping creation"
-        return 0
-    fi
-
+    # Render on every run, replacing a config an earlier attempt left in
+    # RUN_DIR. A reused config kept that attempt's inputs (BABS_NIDM_DERIV,
+    # DATALAD_SET_DIR, FS_LICENSE, ...) while the log printed this run's.
     echo "Creating config YAML file from template..."
 
-    # Copy template to output first
-    cp "$template_path" "$output_path"
+    # Copy template to output first. Remove the old file rather than write
+    # over it: a read-only config would make cp fail and leave the old one in
+    # place, and a symlink would have cp overwrite the file it points to.
+    rm -f "$output_path"
+    if ! cp "$template_path" "$output_path"; then
+        echo "ERROR: cannot write the config ${output_path}." >&2
+        exit 1
+    fi
 
     # Perform substitutions using sed for more reliable pattern matching
     while [ $# -gt 0 ]; do
@@ -254,9 +283,13 @@ babs_prepare_yaml_config() {
         local escaped_value
         escaped_value=$(printf '%s' "$value" | sed -e 's/\\/\\\\/g' -e 's/&/\\&/g' -e 's/\//\\\//g')
 
-        # Replace both ${VAR} and $VAR forms
-        sed -i "s/\${${var}}/${escaped_value}/g" "$output_path"
-        sed -i "s/\$${var}/${escaped_value}/g" "$output_path"
+        # Replace both ${VAR} and $VAR forms. sed -i writes a new file in the
+        # config's directory, so it fails on a run dir that is not writable or
+        # a full disk; stop there instead of passing on the bare template.
+        if ! sed -i -e "s/\${${var}}/${escaped_value}/g" -e "s/\$${var}/${escaped_value}/g" "$output_path"; then
+            echo "ERROR: cannot write the config ${output_path}." >&2
+            exit 1
+        fi
 
         shift
     done
@@ -276,7 +309,7 @@ babs_configure_session_selection() {
         return 1
     fi
 
-    # Make repeated wrapper runs deterministic if a generated config is reused.
+    # Idempotent: a config that already holds the flag ends up with one.
     sed -i '/^[[:space:]]*\$SESSION_SELECTION_FLAG:/d' "$config_path"
 
     if [ "$processing_level" = "session" ]; then
@@ -305,8 +338,8 @@ babs_configure_max_voxel_size() {
         return 1
     fi
 
-    # A reused config may carry a limit from an earlier run (RUN_DIR has no
-    # site in it), and YAML keeps the last of two duplicate keys.
+    # Idempotent: drop any limit already there, since YAML keeps the last of
+    # two duplicate keys.
     sed -i '/^[[:space:]]*--max-voxel-size:/d' "$config_path"
 
     [ -n "$max_voxel_size" ] || return 0
@@ -355,8 +388,9 @@ babs_study_output_dir() {
     # then had to be hand-merged and renamed. RUN_DATE still stamps the scratch
     # run dir, the compute space, the log file and the SLURM job name, which are
     # per-attempt rather than part of the deliverable. If a project already
-    # exists here, `babs init` refuses -- deliberately: resuming or redoing a
-    # site is a decision, made explicit via BABS_OUTPUT_DIR.
+    # exists here, the wrapper stops (babs_check_no_project) -- deliberately:
+    # resuming a site is `babs submit` in its project, and redoing it is a
+    # decision, made explicit via BABS_OUTPUT_DIR.
     echo "${DATALAD_SET_DIR}/${1}/site-${2}/derivatives/babs-${3}"
 }
 
@@ -425,6 +459,39 @@ babs_shared_group() {
     echo "$grp"
 }
 
+# Stop if a BABS project already exists at the output directory. babs init
+# refuses one, and a run that went on would submit into the old project, with
+# the version, config and inputs of its own init, not this run's.
+# Usage: babs_check_no_project <output_dir>
+babs_check_no_project() {
+    local output_dir="$1"
+    # The wrapper changes into the run dir before babs init, so a relative
+    # path would be checked here and used somewhere else.
+    if [[ "$output_dir" != /* ]]; then
+        echo "ERROR: the project path must be absolute, got '${output_dir}' (from BABS_OUTPUT_DIR or DATALAD_SET_DIR)." >&2
+        exit 1
+    fi
+    if [ -e "$output_dir" ] || [ -L "$output_dir" ]; then
+        # babs init makes .babs/ in the project once it has started; any other
+        # directory here is not one, and may hold other work.
+        if [ -d "$output_dir/.babs" ] && [ ! -L "$output_dir" ]; then
+            echo "ERROR: a BABS project already exists at ${output_dir}." >&2
+            echo "  To submit more of its jobs: cd \"${output_dir}\" && babs submit" >&2
+            echo "  If an earlier run stopped at text2git or the push, run the commands its log printed first." >&2
+            echo "  If babs submit there says to run babs init first, babs init did not finish and the directory holds no usable project: remove it and run the wrapper again." >&2
+            echo "  To build a new project with this run's settings, set BABS_OUTPUT_DIR to a new absolute path." >&2
+        elif [ -d "$output_dir" ] && [ ! -L "$output_dir" ] && [ -z "$(ls -A "$output_dir" 2>/dev/null)" ]; then
+            echo "ERROR: ${output_dir} exists and is empty, as a babs init that did not finish can leave it." >&2
+            echo "  Remove it with: rmdir \"${output_dir}\"" >&2
+            echo "  then run the wrapper again, or set BABS_OUTPUT_DIR to a new absolute path." >&2
+        else
+            echo "ERROR: ${output_dir} already exists and is not a BABS project (it has no .babs/)." >&2
+            echo "  Set BABS_OUTPUT_DIR to an absolute path that does not exist yet." >&2
+        fi
+        exit 1
+    fi
+}
+
 # Initialize BABS and submit jobs
 # Usage: babs_init_and_submit <container_ds_path> <container_name> <config_path> <output_dir> <processing_level>
 babs_init_and_submit() {
@@ -433,6 +500,10 @@ babs_init_and_submit() {
     local config_path="$3"
     local output_dir="$4"
     local processing_level="${5:-subject}"
+    # The command to submit this run's jobs by hand, keeping the ramp.
+    local submit_cmd="cd \"${output_dir}\" && babs submit${BABS_SUBMIT_COUNT:+ --count ${BABS_SUBMIT_COUNT}}"
+
+    babs_check_no_project "$output_dir"
 
     echo "Initializing BABS with the dataset-specific output directory..."
 
@@ -462,7 +533,7 @@ babs_init_and_submit() {
         echo "NOTE: no shared group resolved; project will be writable only by $(id -un)."
     fi
 
-    babs init \
+    if ! babs init \
         --container_ds "${container_ds_path}" \
         --container_name "${container_name}" \
         --container_config "${config_path}" \
@@ -470,7 +541,10 @@ babs_init_and_submit() {
         --queue slurm \
         ${shared_args[@]+"${shared_args[@]}"} \
         ${list_sub_args[@]+"${list_sub_args[@]}"} \
-        "${output_dir}"
+        "${output_dir}"; then
+        echo "ERROR: babs init failed for ${output_dir}; nothing was submitted." >&2
+        exit 1
+    fi
 
     cd "${output_dir}" || exit 1
 
@@ -489,7 +563,14 @@ babs_init_and_submit() {
     # is what we want: this only changes where *text* lands.
     if [ "${BABS_TEXT2GIT:-1}" = "1" ]; then
         echo "Applying text2git so .ttl/.json/.tsv land in git, not annex..."
-        datalad run-procedure -d "${output_dir}" cfg_text2git
+        if ! datalad run-procedure -d "${output_dir}" cfg_text2git; then
+            echo "ERROR: text2git could not be applied to ${output_dir}; nothing was submitted." >&2
+            echo "  After fixing the cause, in the project run:" >&2
+            echo "    datalad run-procedure cfg_text2git" >&2
+            echo "    datalad push --to input --data nothing && datalad push --to output --data nothing" >&2
+            echo "  and then: ${submit_cmd}" >&2
+            exit 1
+        fi
 
         # Push the commit to both RIA siblings immediately. `babs init` already
         # published master to them BEFORE this commit existed, and nothing later
@@ -501,8 +582,13 @@ babs_init_and_submit() {
         # divergence post_babs.sh refuses to auto-replay at harvest time.
         # --data nothing: this is a git-history push, no annexed content.
         echo "Publishing the text2git commit to the RIA siblings..."
-        datalad push --to input --data nothing
-        datalad push --to output --data nothing
+        if ! datalad push --to input --data nothing || ! datalad push --to output --data nothing; then
+            echo "ERROR: the text2git commit could not be pushed to the RIA siblings of ${output_dir}; nothing was submitted." >&2
+            echo "  After fixing the cause, in the project run:" >&2
+            echo "    datalad push --to input --data nothing && datalad push --to output --data nothing" >&2
+            echo "  and then: ${submit_cmd}" >&2
+            exit 1
+        fi
     fi
 
     # Check the setup before submitting.
@@ -552,6 +638,7 @@ babs_init_and_submit() {
         fi
         submit_args=( --count "$BABS_SUBMIT_COUNT" )
     fi
+    # The command to submit this run's jobs by hand, keeping the ramp.
 
     if [ "$check_setup_ok" -eq 1 ]; then
         if [ -n "${BABS_SUBMIT_COUNT:-}" ]; then
@@ -560,12 +647,17 @@ babs_init_and_submit() {
         else
             echo "Submitting all jobs..."
         fi
-        babs submit ${submit_args[@]+"${submit_args[@]}"}
+        if ! babs submit ${submit_args[@]+"${submit_args[@]}"}; then
+            echo "ERROR: babs submit failed for ${output_dir}. Review the errors above, then submit with: ${submit_cmd}" >&2
+            exit 1
+        fi
     else
         echo "BABS setup check failed. Please review the errors above."
-        echo "If this is the known study-layout check_setup bug (FileNotFoundError"
-        echo "on '<project>/inputs/data'), re-run with BABS_SKIP_CHECK_SETUP=1."
-        echo "Or submit manually after review with: babs submit"
+        echo "The project is built; nothing was submitted. If this is the known"
+        echo "study-layout check_setup bug (FileNotFoundError on"
+        echo "'<project>/inputs/data'), or once you have reviewed the errors, submit with:"
+        echo "  ${submit_cmd}"
+        echo "Set BABS_SKIP_CHECK_SETUP=1 on later runs to skip the check."
         exit 1
     fi
 }
@@ -602,6 +694,17 @@ babs_validate_args() {
         babs_print_usage
         exit 1
     fi
+
+    # Both names go into paths (run dir, log file), so a "/" or a space would
+    # point them somewhere else or at nothing.
+    local name
+    for name in "$site_name" "$dataset_name"; do
+        if [[ ! "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+            echo "ERROR: site and dataset names must start with a letter or digit and hold only letters, digits, '.', '_' and '-' (got '$name')" >&2
+            babs_print_usage
+            exit 1
+        fi
+    done
 
     if [ "$processing_level" != "subject" ] && [ "$processing_level" != "session" ]; then
         echo "ERROR: processing_level must be either 'subject' or 'session' (provided: '$processing_level')" >&2

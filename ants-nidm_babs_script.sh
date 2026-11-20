@@ -17,7 +17,7 @@
 #                              also sets the container name and zip version
 #   BABS_OUTPUT_DIR=<path>   - Place the project at an explicit path, which
 #                              is required when a project already exists for
-#                              this site (babs init refuses to overwrite)
+#                              this site (the wrapper stops otherwise)
 
 # Get the directory where this script is located
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -77,12 +77,15 @@ babs_setup_env
 # ============================================================================
 # Create directories
 # ============================================================================
-RUN_DIR="${SCRATCH_DIR}/${DATASET_NAME}_${RUN_DATE}"
+RUN_DIR="${SCRATCH_DIR}/${DATASET_NAME}_site-${SITE_NAME}_${RUN_DATE}"
 COMPUTE_DIR="${SCRATCH_DIR_COMPUTE}/ants-nidm_compute_${RUN_DATE}"
 
-mkdir -p "$RUN_DIR"
-mkdir -p "$COMPUTE_DIR"
-cd "$RUN_DIR"
+# Stop before any image is copied if this site already has a project.
+OUTPUT_DIR="$(babs_study_output_dir "$DATASET_NAME" "$SITE_NAME" "ants-nidm")"
+babs_check_no_project "$OUTPUT_DIR"
+
+mkdir -p "$RUN_DIR" "$COMPUTE_DIR" || exit 1
+cd "$RUN_DIR" || exit 1
 echo "Current directory: $PWD"
 
 # ============================================================================
@@ -134,8 +137,6 @@ babs_check_nidm "$DATASET_NAME" "$SITE_NAME"
 # ============================================================================
 # Initialize BABS and submit
 # ============================================================================
-OUTPUT_DIR="$(babs_study_output_dir "$DATASET_NAME" "$SITE_NAME" "ants-nidm")"
-
 babs_init_and_submit \
     "${PWD}/${CONTAINER_DS_NAME}" \
     "$CONTAINER_NAME" \
