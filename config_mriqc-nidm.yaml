@@ -26,6 +26,12 @@ bids_app_args:
     --mem: "16G"
     --nprocs: "12"
     --omp-nthreads: "8"
+    # Rate T1w, T2w and bold only. MRIQC's default adds dwi, and a dwi IQM
+    # JSON cannot be converted to NIDM (list-valued bValues and IQMs with no
+    # dictionary row): the job exits 1 and BABS keeps nothing for the subject,
+    # its T1w and bold IQMs included. BABS writes the value unquoted, so the
+    # app gets three arguments.
+    --modalities: "T1w T2w bold"
 singularity_args:
     - --userns
     - --no-home

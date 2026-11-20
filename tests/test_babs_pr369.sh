@@ -26,6 +26,49 @@ for template in "$REPO_ROOT"/config_*-nidm.yaml; do
     grep -q 'path_in_babs: sourcedata/BIDS' "$config_path"
     grep -q 'path_in_babs: sourcedata/NIDM' "$config_path"
 
+    # MRIQC rates T1w, T2w and bold only: without --modalities it adds dwi,
+    # whose IQM JSON mriqc-nidm cannot convert, so every subject with a dwi
+    # image would fail and lose its other IQMs too.
+    # BABS passes only the bids_app_args block to the app, so the line has to
+    # be in that block.
+    if [ "$(basename "$template")" = config_mriqc-nidm.yaml ]; then
+        app_args=$(awk '/^bids_app_args:/ {f = 1; next} /^[^[:space:]#]/ {f = 0} f' "$config_path")
+        if [ "$(grep -c '^[[:space:]]*--modalities:' "$config_path")" -ne 1 ] \
+            || ! grep -qx '    --modalities: "T1w T2w bold"' <<< "$app_args"; then
+            echo "$template must hold one line under bids_app_args: --modalities: \"T1w T2w bold\"" >&2
+            exit 1
+        fi
+
+        # babs_require_min_version: the mriqc wrapper's floor for --modalities.
+        # It exits on a version below the floor, so each call runs in a subshell.
+        min_failures=0
+        for v in 0.1.3 0.1.4 0.1.10 1.0.0; do
+            if ! ( babs_require_min_version MRIQC_VERSION "$v" 0.1.3 test ) 2>/dev/null; then
+                echo "MRIQC_VERSION=$v was refused by a 0.1.3 floor" >&2
+                min_failures=$((min_failures + 1))
+            fi
+        done
+        for v in 0.1.0 0.1.2 0.0.9; do
+            if ( babs_require_min_version MRIQC_VERSION "$v" 0.1.3 test ) 2>/dev/null; then
+                echo "MRIQC_VERSION=$v was accepted by a 0.1.3 floor" >&2
+                min_failures=$((min_failures + 1))
+            fi
+        done
+        # The mriqc wrapper applies the floor before anything else runs: with
+        # MRIQC_VERSION=0.1.2 it stops with the floor's message and does not
+        # get as far as choosing the run date.
+        floor_dir="$TEST_TMPDIR/floor_cwd"
+        mkdir -p "$floor_dir"
+        floor_out=$(cd "$floor_dir" && env -i PATH=/usr/bin:/bin HOME="$floor_dir" MRIQC_VERSION=0.1.2 \
+            bash "$REPO_ROOT/mriqc-nidm_babs_script.sh" A study-TEST 2>&1) && floor_status=0 || floor_status=$?
+        if [ "$floor_status" -eq 0 ] || [[ "$floor_out" != *"needs MRIQC_VERSION 0.1.3 or later, got 0.1.2"* ]] \
+            || [[ "$floor_out" == *"Using RUN_DATE"* ]]; then
+            echo "mriqc-nidm_babs_script.sh with MRIQC_VERSION=0.1.2 (exit $floor_status) did not stop at the 0.1.3 floor: $floor_out" >&2
+            min_failures=$((min_failures + 1))
+        fi
+        test "$min_failures" -eq 0
+    fi
+
     # The per-subject zip scheme depends on ${subid} SURVIVING templating:
     # babs_prepare_yaml_config only substitutes the vars passed to it, so
     # ${subid} must reach the rendered participant_job.sh where bash expands it
