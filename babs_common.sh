@@ -27,8 +27,32 @@ babs_resolve_version() {
 # Usage: babs_check_zip_version <config_path> <VAR_NAME>
 babs_check_zip_version() {
     local config_path="$1" var_name="$2"
-    if ! grep -q "\"${ZIP_VERSION}\"" "$config_path"; then
-        echo "ERROR: ${config_path} does not zip as ${ZIP_VERSION}; it was made for another ${var_name}. Remove it or use a new RUN_DATE." >&2
+    # An empty version would make this a search for "", which the config
+    # rendered with it always contains: its zip line is then ${subid}: "".
+    if [[ ! "${ZIP_VERSION:-}" =~ ^[0-9]+-[0-9]+-[0-9]+$ ]]; then
+        echo "ERROR: ZIP_VERSION must be X-Y-Z, got '${ZIP_VERSION:-}'. The wrapper sets it with babs_resolve_version ${var_name} before it prepares the config." >&2
+        exit 1
+    fi
+    if [ ! -f "$config_path" ] || [ ! -r "$config_path" ]; then
+        echo "ERROR: cannot read the config ${config_path}." >&2
+        exit 1
+    fi
+    # Compare the zip line itself, not any quoted value in the config. There
+    # must be exactly one line with a ${subid} key, quoted or not: YAML keeps
+    # the last of two equal keys, so a second one would leave open which
+    # version babs zips under. This is a line check, not a YAML parse: it is
+    # exact for the configs the wrappers render, and a hand-edited config in
+    # another YAML style (flow mapping, a key under another section) can still
+    # get past it or be refused.
+    local zip_lines zip_count
+    zip_lines=$(grep -E '^[[:space:]]*"?\$\{subid\}"?:' "$config_path" || true)
+    zip_count=$(printf '%s' "$zip_lines" | grep -c . || true)
+    if [ "$zip_count" -ne 1 ]; then
+        echo "ERROR: ${config_path} has ${zip_count} lines with a \${subid} key; expected one. Remove it or use a new RUN_DATE." >&2
+        exit 1
+    fi
+    if ! printf '%s\n' "$zip_lines" | grep -qE "^[[:space:]]*\\\$\{subid\}:[[:space:]]*\"${ZIP_VERSION}\"([[:space:]]+#.*)?[[:space:]]*\$"; then
+        echo "ERROR: the \${subid} line of ${config_path} is not \"${ZIP_VERSION}\": the file is from a run with another ${var_name}, or was edited. Remove it or use a new RUN_DATE." >&2
         exit 1
     fi
 }
