@@ -32,8 +32,9 @@ bids_app_args:
     # for the subject, its T1w and bold IQMs included. 0.1.5 refuses dwi in
     # --modalities unless --skip-nidm-conversion is passed; without
     # --modalities MRIQC rates dwi, the app leaves those IQMs out of the NIDM,
-    # and a failure in MRIQC's own dwi workflow still fails the subject. BABS writes the value unquoted, so the app gets three
-    # arguments; keep this long form (mriqc-nidm drops -mT1w and -m=T1w).
+    # and a failure in MRIQC's own dwi workflow still fails the subject. BABS
+    # writes the value unquoted, so the app gets three arguments; keep this
+    # long form (mriqc-nidm drops -mT1w and -m=T1w).
     --modalities: "T1w T2w bold"
 singularity_args:
     - --userns
