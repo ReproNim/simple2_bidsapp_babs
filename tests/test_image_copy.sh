@@ -221,4 +221,12 @@ expect_stop run_self "source inside the run directory" '^ERROR: the image was fo
 [ "$(wc -c < "$TEST_TMPDIR/run_self/app.sif")" = 4096 ] \
     || { echo "FAIL: the image found in the run directory was deleted"; exit 1; }
 
+# A symlink in the run directory pointing at the source is replaced by a
+# copy; the source is untouched.
+mkdir -p "$TEST_TMPDIR/run_link"
+ln -s "$BASE_DIR/app.sif" "$TEST_TMPDIR/run_link/app.sif"
+run_case ok run_link
+[ "$ec" -eq 0 ] || { echo "FAIL: a symlink to the source in the run dir stopped setup (exit $ec)"; cat "$TEST_TMPDIR/run_link.out"; exit 1; }
+[ "$(wc -c < "$BASE_DIR/app.sif")" = 4096 ] || { echo "FAIL: the source behind a run-dir symlink changed"; exit 1; }
+
 echo "PASS: test_image_copy"

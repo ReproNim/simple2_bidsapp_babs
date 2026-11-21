@@ -183,7 +183,9 @@ babs_copy_image() {
     local src_size tmp_size
     # A relative BASE_DIR or SIF_SEARCH_DIRS entry resolves inside the run
     # directory, so the source can be the destination itself; removing the
-    # destination below would delete the only image found.
+    # destination below would delete the only image found. A symlink at the
+    # destination is only replaced, so remove it first.
+    [ ! -L "$dest" ] || rm -f "$dest"
     if [ "$src" -ef "$dest" ]; then
         echo "ERROR: the image was found in the run directory itself (${src}); set BASE_DIR and SIF_SEARCH_DIRS to absolute paths." >&2
         exit 1
