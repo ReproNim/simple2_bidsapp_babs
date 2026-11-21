@@ -73,7 +73,10 @@ case "${1:-}" in
             [ "$1" = "--url" ] && url="$2"
             shift
         done
-        echo "containers-add image=$(cat "$url") name=${name}" >> "$STUB_DIR/calls.log" ;;
+        echo "containers-add image=$(cat "$url") name=${name}" >> "$STUB_DIR/calls.log"
+        # Register a copy, as datalad does, for the wrapper's size check.
+        mkdir -p ".datalad/environments/${name}"
+        cp "$url" ".datalad/environments/${name}/image" ;;
     run-procedure) [ -z "${STUB_TEXT2GIT_FAIL:-}" ] || exit 1 ;;
     push)
         echo "datalad-push" >> "$STUB_DIR/calls.log"

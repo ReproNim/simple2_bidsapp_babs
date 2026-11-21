@@ -191,13 +191,40 @@ babs_copy_image() {
         exit 1
     fi
     src_size=$(wc -c < "$src")
-    tmp_size=$(wc -c < "$tmp" 2>/dev/null || echo missing)
+    tmp_size=$(wc -c 2>/dev/null < "$tmp" || echo missing)
     if [ "$src_size" != "$tmp_size" ]; then
         rm -f "$tmp"
         echo "ERROR: copy of ${src} is ${tmp_size} bytes, expected ${src_size}; removed the partial file." >&2
         exit 1
     fi
     mv -f "$tmp" "$dest"
+}
+
+# Stop before copying a source image that apptainer cannot read (a truncated
+# build, a stray file under the image's name) or whose version label names
+# another version than its filename. Copying it would pass the size check,
+# and babs init would put it into the project for every job. Images built
+# before the version label existed have none, which is accepted.
+# Usage: babs_check_image <source> <sif_filename>
+babs_check_image() {
+    local src="$1" sif_filename="$2" labels label_version want=""
+    if ! command -v apptainer >/dev/null 2>&1; then
+        echo "ERROR: apptainer is not on PATH, so ${src} cannot be checked. Load it (module load apptainer) and rerun." >&2
+        exit 1
+    fi
+    if ! labels=$(apptainer inspect --labels "$src" 2>&1); then
+        echo "ERROR: apptainer cannot read ${src} as a container image:" >&2
+        echo "$labels" >&2
+        exit 1
+    fi
+    label_version=$(awk '$1 == "org.opencontainers.image.version:" {print $2}' <<< "$labels")
+    if [[ "$sif_filename" =~ _bidsapp-([0-9]+\.[0-9]+\.[0-9]+)\.sif$ ]]; then
+        want="${BASH_REMATCH[1]}"
+    fi
+    if [ -n "$label_version" ] && [ -n "$want" ] && [ "$label_version" != "$want" ]; then
+        echo "ERROR: ${src} is labelled version ${label_version}, but its name asks for ${want}." >&2
+        exit 1
+    fi
 }
 
 # Generic container setup
@@ -228,28 +255,24 @@ babs_setup_container() {
 
     echo "Setting up container..."
 
-    # Find and copy SIF file
-    if [ ! -f "${PWD}/${sif_filename}" ]; then
-        # Try BASE_DIR first
-        if [ -f "${BASE_DIR}/${sif_filename}" ]; then
-            echo "Copying ${sif_filename} from BASE_DIR"
-            babs_copy_image "${BASE_DIR}/${sif_filename}" "${PWD}/${sif_filename}"
-        else
-            # Try alternative paths
-            for alt_path in "${sif_alt_paths[@]}"; do
-                if [ -f "${alt_path}/${sif_filename}" ]; then
-                    echo "Copying ${sif_filename} from ${alt_path}"
-                    babs_copy_image "${alt_path}/${sif_filename}" "${PWD}/${sif_filename}"
-                    break
-                fi
-            done
-
-            if [ ! -f "${PWD}/${sif_filename}" ]; then
-                echo "ERROR: ${sif_filename} not found in BASE_DIR or SIF_SEARCH_DIRS. Build it, or choose another existing version (ANTS_VERSION, FS_VERSION, MRIQC_VERSION)." >&2
-                exit 1
-            fi
+    # Find the image: BASE_DIR first, then the alternative paths. Copy it even
+    # when a file of that name is already in the run directory: a copy cut
+    # short before babs_copy_image existed, or a source rebuilt since, would
+    # otherwise be used unchecked.
+    local src="" dir
+    for dir in "${BASE_DIR}" "${sif_alt_paths[@]}"; do
+        if [ -f "${dir}/${sif_filename}" ]; then
+            src="${dir}/${sif_filename}"
+            break
         fi
+    done
+    if [ -z "$src" ]; then
+        echo "ERROR: ${sif_filename} not found in BASE_DIR or SIF_SEARCH_DIRS. Build it, or choose another existing version (ANTS_VERSION, FS_VERSION, MRIQC_VERSION)." >&2
+        exit 1
     fi
+    babs_check_image "$src" "$sif_filename"
+    echo "Copying ${sif_filename} from ${dir}"
+    babs_copy_image "$src" "${PWD}/${sif_filename}"
 
     babs_log_image_revision "${PWD}/${sif_filename}"
 
@@ -261,10 +284,25 @@ babs_setup_container() {
     cd "${container_ds_name}" || exit 1
 
     # Add the container if it's not already added
+    # containers-add makes a second full copy of the image, so it can run out
+    # of space or quota where the first copy did not. Stop on its failure, and
+    # check the registered copy against the run directory copy before that
+    # one is removed.
     if ! datalad containers-list 2>/dev/null | grep -q "${container_name}"; then
-        datalad containers-add \
+        if ! datalad containers-add \
             --url "${PWD}/../${sif_filename}" \
-            "${container_name}"
+            "${container_name}"; then
+            echo "ERROR: datalad containers-add failed for ${container_name}." >&2
+            exit 1
+        fi
+    fi
+    local registered=".datalad/environments/${container_name}/image"
+    local want_size got_size
+    want_size=$(wc -c < "../${sif_filename}")
+    got_size=$(wc -c 2>/dev/null < "$registered" || echo missing)
+    if [ "$want_size" != "$got_size" ]; then
+        echo "ERROR: the registered image ${PWD}/${registered} is ${got_size} bytes, expected ${want_size}. Remove ${PWD} and rerun." >&2
+        exit 1
     fi
 
     cd ../ || exit 1

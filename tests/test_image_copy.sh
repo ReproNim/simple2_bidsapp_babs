@@ -14,34 +14,65 @@ REAL_CP="$(command -v cp)"
 
 # Modes: ok (real copy), fail (partial file, exit 1), short (partial file,
 # exit 0), kill (partial file, then SIGKILL of the calling shell, so no cleanup can run).
+# A directory target is resolved as cp does, so a case cannot pass because
+# the stand-in wrote nothing.
 cat > "$STUBS/cp" <<STUB
 #!/bin/bash
+dest="\$2"
+[ -d "\$dest" ] && dest="\$dest/\$(basename "\$1")"
 case "\${CP_MODE:-ok}" in
     ok) exec "$REAL_CP" "\$@" ;;
-    fail) head -c 10 "\$1" > "\$2"; exit 1 ;;
-    short) head -c 10 "\$1" > "\$2"; exit 0 ;;
-    kill) head -c 10 "\$1" > "\$2"; kill -9 \$PPID ;;
+    fail) head -c 10 "\$1" > "\$dest"; exit 1 ;;
+    short) head -c 10 "\$1" > "\$dest"; exit 0 ;;
+    kill) head -c 10 "\$1" > "\$dest"; kill -9 \$PPID ;;
 esac
 STUB
 chmod +x "$STUBS/cp"
 
 # datalad stand-in: reaching containers-add means the image was accepted.
-cat > "$STUBS/datalad" <<'STUB'
+# containers-add registers a copy of the image, as datalad does; DL_MODE=fail
+# makes it fail, DL_MODE=short makes the registered copy short.
+cat > "$STUBS/datalad" <<STUB
 #!/bin/bash
-echo "datalad $*" >> "$STUB_DIR/calls.log"
-case "$1" in create) mkdir -p "${@: -1}" ;; esac
+echo "datalad \$*" >> "\$STUB_DIR/calls.log"
+case "\$1" in
+    create) mkdir -p "\${@: -1}" ;;
+    containers-add)
+        [ "\${DL_MODE:-ok}" != fail ] || exit 1
+        name="\${@: -1}"
+        url="\$3"
+        mkdir -p ".datalad/environments/\$name"
+        if [ "\${DL_MODE:-ok}" = short ]; then
+            head -c 10 "\$url" > ".datalad/environments/\$name/image"
+        else
+            "$REAL_CP" "\$url" ".datalad/environments/\$name/image"
+        fi ;;
+esac
 exit 0
 STUB
 chmod +x "$STUBS/datalad"
+
+# apptainer stand-in: APPT_MODE=fail makes inspect fail, as on a file that is
+# not an image; APPT_VERSION sets the version label it reports.
+cat > "$STUBS/apptainer" <<'STUB'
+#!/bin/bash
+[ "${APPT_MODE:-ok}" != fail ] || { echo "FATAL: not a SIF file" >&2; exit 255; }
+[ -z "${APPT_VERSION:-}" ] || echo "org.opencontainers.image.version: $APPT_VERSION"
+exit 0
+STUB
+chmod +x "$STUBS/apptainer"
 
 export STUB_DIR="$TEST_TMPDIR"
 export BASE_DIR="$TEST_TMPDIR/images"
 mkdir -p "$BASE_DIR"
 head -c 4096 /dev/zero > "$BASE_DIR/app.sif"
+head -c 4096 /dev/zero > "$BASE_DIR/app_bidsapp-1.2.3.sif"
 
-# run_case <mode> <dir>: run the function in a subshell, as it can `exit`.
+# run_case <mode> <dir> [sif_filename] [VAR=value ...]: run the function in a
+# subshell, as it can `exit`.
 run_case() {
-    local mode="$1" dir="$TEST_TMPDIR/$2"
+    local mode="$1" dir="$TEST_TMPDIR/$2" sif="${3:-app.sif}"
+    shift 2; [ $# -eq 0 ] || shift
     mkdir -p "$dir"
     : > "$TEST_TMPDIR/calls.log"
     set +e
@@ -49,12 +80,21 @@ run_case() {
         cd "$dir"
         PATH="$STUBS:$PATH" CP_MODE="$mode"
         export PATH CP_MODE
+        [ $# -eq 0 ] || export "$@"
         source "$REPO_ROOT/babs_common.sh"
         babs_log_image_revision() { :; }
-        babs_setup_container ants ants-ds ants-container app.sif
+        babs_setup_container ants ants-ds ants-container "$sif"
     ) > "$dir.out" 2>&1
     ec=$?
     set -e
+}
+
+# expect_stop <case> <what> <error pattern>: the case exited non-zero with
+# that error.
+expect_stop() {
+    [ "$ec" -ne 0 ] || { echo "FAIL: $2 exited 0"; cat "$TEST_TMPDIR/$1.out"; exit 1; }
+    grep -q "$3" "$TEST_TMPDIR/$1.out" \
+        || { echo "FAIL: $2 printed no matching error"; cat "$TEST_TMPDIR/$1.out"; exit 1; }
 }
 
 for mode in fail short; do
@@ -75,11 +115,16 @@ run_case kill run_kill
 [ ! -e "$TEST_TMPDIR/run_kill/app.sif" ] \
     || { echo "FAIL: killed copy left a file at app.sif"; exit 1; }
 
-# A stale .partial from an earlier killed run does not block a fresh copy.
+# A stale .partial from an earlier run does not block a fresh copy. It is a
+# symlink to a file outside the run directory here: copying through it would
+# overwrite that file, so it must be removed first.
 mkdir -p "$TEST_TMPDIR/run_stale"
-echo stale > "$TEST_TMPDIR/run_stale/app.sif.partial"
+echo victim > "$TEST_TMPDIR/victim"
+ln -s "$TEST_TMPDIR/victim" "$TEST_TMPDIR/run_stale/app.sif.partial"
 run_case ok run_stale
 [ "$ec" -eq 0 ] || { echo "FAIL: stale .partial blocked the copy"; exit 1; }
+[ "$(cat "$TEST_TMPDIR/victim")" = victim ] \
+    || { echo "FAIL: the copy wrote through a stale .partial symlink"; exit 1; }
 grep -q containers-add "$TEST_TMPDIR/calls.log" \
     || { echo "FAIL: copy after a stale .partial did not reach containers-add"; exit 1; }
 [ ! -e "$TEST_TMPDIR/run_stale/app.sif.partial" ] \
@@ -90,5 +135,34 @@ run_case ok run_ok
 [ "$ec" -eq 0 ] || { echo "FAIL: complete copy exited $ec"; cat "$TEST_TMPDIR/run_ok.out"; exit 1; }
 grep -q containers-add "$TEST_TMPDIR/calls.log" \
     || { echo "FAIL: complete copy did not reach containers-add"; exit 1; }
+
+# A source apptainer cannot read is not copied.
+run_case ok run_badsrc app.sif APPT_MODE=fail
+expect_stop run_badsrc "unreadable source" '^ERROR: apptainer cannot read'
+[ ! -e "$TEST_TMPDIR/run_badsrc/app.sif" ] || { echo "FAIL: unreadable source was copied"; exit 1; }
+! grep -q containers-add "$TEST_TMPDIR/calls.log" || { echo "FAIL: unreadable source reached containers-add"; exit 1; }
+
+# A version label that disagrees with the filename stops setup; a matching
+# label goes through.
+run_case ok run_wrongver app_bidsapp-1.2.3.sif APPT_VERSION=1.2.4
+expect_stop run_wrongver "wrong version label" 'labelled version 1.2.4, but its name asks for 1.2.3'
+! grep -q containers-add "$TEST_TMPDIR/calls.log" || { echo "FAIL: wrong version label reached containers-add"; exit 1; }
+run_case ok run_rightver app_bidsapp-1.2.3.sif APPT_VERSION=1.2.3
+[ "$ec" -eq 0 ] || { echo "FAIL: matching version label exited $ec"; cat "$TEST_TMPDIR/run_rightver.out"; exit 1; }
+
+# A failed or short registration by containers-add stops setup.
+run_case ok run_dlfail app.sif DL_MODE=fail
+expect_stop run_dlfail "failed containers-add" '^ERROR: datalad containers-add failed'
+run_case ok run_dlshort app.sif DL_MODE=short
+expect_stop run_dlshort "short registered image" '^ERROR: the registered image .* is 10 bytes, expected 4096'
+
+# A short image already at the final name, as a copy cut short before
+# babs_copy_image existed leaves, is replaced by a full copy.
+mkdir -p "$TEST_TMPDIR/run_oldpartial"
+head -c 10 /dev/zero > "$TEST_TMPDIR/run_oldpartial/app.sif"
+run_case ok run_oldpartial
+[ "$ec" -eq 0 ] || { echo "FAIL: rerun over a short app.sif exited $ec"; cat "$TEST_TMPDIR/run_oldpartial.out"; exit 1; }
+[ "$(wc -c < "$TEST_TMPDIR/run_oldpartial/ants-ds/.datalad/environments/ants-container/image")" = 4096 ] \
+    || { echo "FAIL: a short app.sif already in the run dir was registered"; exit 1; }
 
 echo "PASS: test_image_copy"
