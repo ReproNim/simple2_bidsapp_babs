@@ -469,7 +469,8 @@ $OUTPUT"
     fi
     # A zero-padded major is the same release.
     run_wrapper "${app}_nidm_padded" "$script" "$new" "${version_var}=$new" BABS_NIDM_DERIV=nidm_05.0.0
-    if [ "$STATUS" -ne 0 ]; then
+    if [ "$STATUS" -ne 0 ] || ! grep -q '^babs-init' "$CASE_DIR/stub/calls.log" \
+        || ! grep -q 'derivatives/nidm_05\.0\.0"' "$CASE_DIR/stub/config.yaml" 2>/dev/null; then
         fail "$script with ${version_var}=$new BABS_NIDM_DERIV=nidm_05.0.0 exited $STATUS:
 $OUTPUT"
     fi
