@@ -57,9 +57,9 @@ One variable per app picks the version, and with it the image file, the containe
 
 | wrapper | variable | default |
 |---|---|---|
-| `ants-nidm_babs_script.sh` | `ANTS_VERSION` | `0.2.2` |
-| `freesurfer-nidm_babs_script.sh` | `FS_VERSION` | `0.1.3` |
-| `mriqc-nidm_babs_script.sh` | `MRIQC_VERSION` | `0.1.3` |
+| `ants-nidm_babs_script.sh` | `ANTS_VERSION` | `0.2.3` |
+| `freesurfer-nidm_babs_script.sh` | `FS_VERSION` | `0.1.4` |
+| `mriqc-nidm_babs_script.sh` | `MRIQC_VERSION` | `0.1.5` |
 
 `mriqc-nidm_babs_script.sh` also reads `MRIQC_MAX_VOXEL_SIZE` (mriqc-nidm 0.1.3 or later). When set, it passes `--max-voxel-size` to the app, which then leaves T1w/T2w images with a voxel dimension above that many mm out of MRIQC, so that one image MRIQC cannot rate does not fail the session. ABIDE II UCLA_Long needs `MRIQC_MAX_VOXEL_SIZE=2` (its `acq-hires` T1w). When unset, every T1w, T2w and bold image is rated.
 
@@ -184,8 +184,8 @@ Each app's YAML config sets its SLURM resources, verified against real runs:
 | Config | Resources | Notes |
 |---|---|---|
 | `config_freesurfer-nidm.yaml` | 8 CPUs, 32 GB, 6 h | needs `FS_LICENSE`; measured 2.5–3.5 h; peak ~29 GB (Caltech, 1 T1w) up to ~31.3 GB (ONRC_2, 5 T1w runs) — sites with many T1w runs per session sit close to the 32 GB ceiling |
-| `config_ants-nidm.yaml` | 16 CPUs, 48 GB, 4 h, 1 GPU | registration is FireANTs on CUDA, so a GPU is required (`--gres=gpu:1` plus `--nv`); the app fails at start without one. The wrapper runs `ants-nidm_bidsapp-0.2.2.sif` (outputs zipped as `0-2-2`) and stops if that image is missing; `ANTS_VERSION=X.Y.Z` selects `ants-nidm_bidsapp-X.Y.Z.sif` and sets the container name and zip version to match, so reproducing the 0.1.0 Caltech run means providing that image as `ants-nidm_bidsapp-0.1.0.sif` and setting `ANTS_VERSION=0.1.0` |
-| `config_mriqc-nidm.yaml` | 12 CPUs, 20 GB, 30 min | measured ~4–5 min and ~10.4 GB peak (Caltech); the allocation must stay above MRIQC's own `--mem 16G`. Rates T1w, T2w and bold only (`--modalities`): mriqc-nidm cannot convert a dwi IQM file to NIDM, and a subject with one would lose all its IQMs. Needs mriqc-nidm 0.1.3 or later, which the wrapper checks. A project built before this setting keeps its own job script, so its dwi subjects need a new project |
+| `config_ants-nidm.yaml` | 16 CPUs, 48 GB, 4 h, 1 GPU | registration is FireANTs on CUDA, so a GPU is required (`--gres=gpu:1` plus `--nv`); the app fails at start without one. The wrapper runs `ants-nidm_bidsapp-0.2.3.sif` (outputs zipped as `0-2-3`) and stops if that image is missing; `ANTS_VERSION=X.Y.Z` selects `ants-nidm_bidsapp-X.Y.Z.sif` and sets the container name and zip version to match, so reproducing the 0.1.0 Caltech run means providing that image as `ants-nidm_bidsapp-0.1.0.sif` and setting `ANTS_VERSION=0.1.0` |
+| `config_mriqc-nidm.yaml` | 12 CPUs, 20 GB, 30 min | measured ~4–5 min and ~10.4 GB peak (Caltech); the allocation must stay above MRIQC's own `--mem 16G`. Rates T1w, T2w and bold only (`--modalities`): up to mriqc-nidm 0.1.4 a dwi IQM file cannot be converted to NIDM, and a subject with one would lose all its IQMs; 0.1.5 leaves dwi IQMs out of the NIDM, but a failure in MRIQC's dwi workflow still fails the subject. Needs mriqc-nidm 0.1.3 or later, which the wrapper checks. A project built before this setting keeps its own job script, so its dwi subjects need a new project |
 
 The wrappers substitute the environment-specific values (paths, license, session flag) into a copy of the config at launch; the copy lands in the scratch run directory, where it records what the latest run of that site on that `RUN_DATE` used (a rerun replaces it).
 
@@ -194,9 +194,9 @@ The wrappers substitute the environment-specific values (paths, license, session
 Two separate things carry a NIDM version, and they must agree:
 
 - **The input records.** Each site's `derivatives/nidm_<version>` folder holds the per-subject `nidm.ttl` files the apps augment, written by the PyNIDM release named in the folder. `BABS_NIDM_DERIV` selects the folder; it changes only when someone regenerates the inputs.
-- **The PyNIDM inside each container.** All three apps pin `pynidm==4.5.0` in their own repositories. This is the PyNIDM that reads and writes NIDM during a job. A PyNIDM installed in your host env has no effect on BABS runs.
+- **The PyNIDM inside each container.** The default images pin `pynidm==5.0.0`: ants-nidm 0.2.3, freesurfer-nidm 0.1.4 and mriqc-nidm 0.1.4 or later. Earlier images (ants-nidm 0.2.2, freesurfer-nidm 0.1.3, mriqc-nidm 0.1.3 and before) pin `pynidm==4.5.0`. This is the PyNIDM that reads and writes NIDM during a job. A PyNIDM installed in your host env has no effect on BABS runs.
 
-Moving to a new PyNIDM release (e.g. 5.0.0) therefore means: regenerate each site's inputs into `derivatives/nidm_5.0.0`, update the three app repositories and rebuild their images, then set `BABS_NIDM_DERIV=nidm_5.0.0` (and update the default in `babs_common.sh`). Don't feed records from one PyNIDM version to containers built with another. For 5.0 specifically, MRIQC (which only calls `csv2nidm`) should need just the pin change, the FreeSurfer converter (`segstats_jsonld`) runs on both 4.x and 5 from freesurfer-nidm 0.1.3, and the ANTs converter (`ants_seg_to_nidm`) imports `nidm.core` and `nidm.experiment`, which 5.0 removes, so it needs a code port first.
+Running the PyNIDM 5.0.0 images therefore needs each site's inputs regenerated with PyNIDM 5.0.0 into `derivatives/nidm_5.0.0`, and `BABS_NIDM_DERIV=nidm_5.0.0`. Don't feed records from one PyNIDM version to containers built with another. To reproduce a PyNIDM 4.5.0 run, set the version variables to the earlier images and `BABS_NIDM_DERIV=nidm_4.5.0`. The next PyNIDM release follows the same steps: regenerate the inputs into `derivatives/nidm_<version>`, update the three app repositories and rebuild their images, then change `BABS_NIDM_DERIV` (and its default in `babs_common.sh`).
 
 ## Adding a new BIDS App
 

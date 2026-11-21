@@ -13,7 +13,7 @@
 #
 # Optional environment variable:
 #   RUN_DATE=YYMMDD - Use specific date instead of auto-generated
-#   MRIQC_VERSION=X.Y.Z - Run mriqc-nidm_bidsapp-X.Y.Z.sif (default 0.1.3,
+#   MRIQC_VERSION=X.Y.Z - Run mriqc-nidm_bidsapp-X.Y.Z.sif (default 0.1.5,
 #                         and 0.1.3 or later); also sets the container name
 #                         and zip version
 #   MRIQC_MAX_VOXEL_SIZE=MM - Pass --max-voxel-size MM (mriqc-nidm 0.1.3+):
@@ -33,9 +33,20 @@ source "${SCRIPT_DIR}/babs_common.sh"
 APP_NAME="mriqc-nidm"
 SCRATCH_DIR="$SCRATCH_DIR_MRIQC"
 CONTAINER_DS_NAME="mriqc-nidm_bidsapp-container"
+# 0.1.4: PyNIDM 5.0.0 inside the image.
+# 0.1.5: a subject whose input NIDM file was never fetched (a git-annex link
+# or pointer file with no content) fails before MRIQC runs. An explicit
+# --nidm-input-dir that is missing or empty is a usage error. dwi IQMs are left
+# out of the NIDM conversion and listed in the subject's
+# processing_summary.json. In nidm.ttl, run is an integer (run-01 -> 1) and
+# session, task and acq keep their filename text ("01" stays "01"); earlier
+# versions wrote run "1.0", session "1" and acq 1.0. Pass-through values keep
+# their text (--task-id 01 is no longer sent as 1). MRIQC's own participant and
+# session options are refused: BABS passes the app's --participant-label and
+# --session-label. Build it from the mriqc-nidm_bidsapp v0.1.5 tag.
 # One variable names the image, the container and the zip version, so a run
 # cannot label one version's outputs with another's number.
-MRIQC_VERSION="${MRIQC_VERSION:-0.1.3}"
+MRIQC_VERSION="${MRIQC_VERSION:-0.1.5}"
 babs_resolve_version MRIQC_VERSION "$MRIQC_VERSION"
 # config_mriqc-nidm.yaml passes --modalities with three values. mriqc-nidm
 # reads an option's values as a list from 0.1.3 on; older images keep only
