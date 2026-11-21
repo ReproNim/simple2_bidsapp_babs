@@ -89,8 +89,9 @@ case "$1 $2" in
         [ -z "${APPT_VERSION:-}" ] || echo "org.opencontainers.image.version: $APPT_VERSION" ;;
     "exec "*)
         [ -z "${APPT_EXEC_FAIL:-}" ] || { echo 'FATAL: "true": executable file not found in $PATH' >&2; exit 255; }
-        # A bind path missing on this host fails the mount, as apptainer does.
-        [ -z "${APPTAINER_BINDPATH:-}${SINGULARITY_BINDPATH:-}" ] || { echo "FATAL: container creation failed: mount hook function failure" >&2; exit 255; }
+        # A bind path, overlay or working directory missing on this host fails
+        # the run, as apptainer does.
+        ! env | grep -q '^\(APPTAINER\|SINGULARITY\)_' || { echo "FATAL: container creation failed: mount hook function failure" >&2; exit 255; }
         [ "$2" = --no-home ] || { echo "FATAL: home not disabled" >&2; exit 255; } ;;
     "sif list")
         [ -z "${APPT_SIF_FAIL:-}" ] || { echo "FATAL: failed to load SIF image" >&2; exit 255; }
@@ -228,7 +229,7 @@ run_case ok run_noexec app.sif APPT_EXEC_FAIL=1
 expect_stop run_noexec "image that cannot run a command" '^ERROR: apptainer could not run a command in'
 ! grep -q containers-add "$TEST_TMPDIR/calls.log" || { echo "FAIL: an image that cannot run a command reached containers-add"; exit 1; }
 # A bind path configured for jobs is not mounted by the check.
-run_case ok run_bindpath app.sif APPTAINER_BINDPATH=/nonexistent SINGULARITY_BINDPATH=/nonexistent
+run_case ok run_bindpath app.sif APPTAINER_BINDPATH=/nonexistent SINGULARITY_BINDPATH=/nonexistent APPTAINER_BIND=/nonexistent SINGULARITY_BIND=/nonexistent APPTAINER_OVERLAY=/nonexistent.img APPTAINER_CWD=/nonexistent
 [ "$ec" -eq 0 ] || { echo "FAIL: a configured bind path failed the image check (exit $ec)"; cat "$TEST_TMPDIR/run_bindpath.out"; exit 1; }
 # Without apptainer on PATH the source cannot be checked.
 NOAPPT="$TEST_TMPDIR/noappt"
@@ -239,6 +240,11 @@ for tool in readlink wc rm mv cmp grep awk mkdir cat head basename dirname; do
 done
 CASE_PATH="$NOAPPT" run_case ok run_noappt
 expect_stop run_noappt "missing apptainer" '^ERROR: apptainer is not on PATH'
+# A shell function of that name is not the program the check runs.
+apptainer() { "$STUBS/apptainer" "$@"; }
+CASE_PATH="$NOAPPT" run_case ok run_noappt
+unset -f apptainer
+expect_stop run_noappt "apptainer only as a shell function" '^ERROR: apptainer is not on PATH'
 ! grep -q containers-add "$TEST_TMPDIR/calls.log" || { echo "FAIL: setup without apptainer reached containers-add"; exit 1; }
 ! grep -q containers-add "$TEST_TMPDIR/calls.log" || { echo "FAIL: truncated source reached containers-add"; exit 1; }
 
@@ -305,7 +311,7 @@ expect_stop run_rerun "rerun over a rebuilt source" 'differs from .*/images2/app
 # still stops.
 rm "$TEST_TMPDIR/images2/app.sif"
 run_case ok run_dlshort app.sif BASE_DIR="$TEST_TMPDIR/images2" APPT_SIF_END=4096
-expect_stop run_dlshort "short registration with the source gone" 'failed the check above. Remove the container dataset, provide app.sif and rerun: chmod -R u+w .*/run_dlshort/ants-ds'
+expect_stop run_dlshort "short registration with the source gone" 'failed the check above. If its output says the image is incomplete or damaged (not a mount, namespace or FUSE error on this host), remove the container dataset, provide app.sif and rerun: chmod -R u+w .*/run_dlshort/ants-ds'
 grep -q 'is 10 bytes, but its SIF objects end at byte 4096' "$TEST_TMPDIR/run_dlshort.out" || { echo "FAIL: short registration with the source gone did not say why"; exit 1; }
 run_case ok run_ok app.sif BASE_DIR="$TEST_TMPDIR/images2"
 [ "$ec" -eq 0 ] && grep -q '^WARNING: app.sif not found' "$TEST_TMPDIR/run_ok.out" \

@@ -239,7 +239,11 @@ babs_copy_image() {
 # Usage: babs_check_image <source> <sif_filename>
 babs_check_image() {
     local src="$1" sif_filename="$2" labels sif_list sif_end src_size label_version label_source run_out want=""
-    if ! command -v apptainer >/dev/null 2>&1; then
+    # type -P: the check runs the apptainer program through env below, which
+    # cannot run a shell function or alias of that name.
+    local appt
+    appt=$(type -P apptainer)
+    if [ -z "$appt" ]; then
         echo "ERROR: apptainer is not on PATH, so ${src} cannot be checked. Load it (module load apptainer) and rerun." >&2
         exit 1
     fi
@@ -269,9 +273,14 @@ babs_check_image() {
         echo "ERROR: ${src} is ${src_size} bytes, longer than its SIF objects (they end at byte ${sif_end}); it is not a plain SIF image." >&2
         exit 1
     fi
-    # Without the configured bind paths and home: a bind path missing on this
-    # host would fail the mount and look like a damaged image.
-    if ! run_out=$(env -u APPTAINER_BINDPATH -u SINGULARITY_BINDPATH apptainer exec --no-home "$src" true 2>&1); then
+    # Without the APPTAINER_* and SINGULARITY_* settings meant for jobs and
+    # without home: a bind path, overlay or working directory missing on this
+    # host would fail the run and look like a damaged image.
+    local unset_args=() var
+    for var in $(compgen -v); do
+        case "$var" in APPTAINER_*|SINGULARITY_*) unset_args+=(-u "$var") ;; esac
+    done
+    if ! run_out=$(env "${unset_args[@]}" "$appt" exec --no-home "$src" true 2>&1); then
         echo "ERROR: apptainer could not run a command in ${src}. Its output below names the cause: a file system that cannot be read (\"executable file not found\", squashfs errors) means the image is damaged or incomplete, so rebuild or recopy it; a mount, namespace or FUSE error means this host cannot run the image." >&2
         echo "$run_out" >&2
         exit 1
@@ -363,7 +372,7 @@ babs_setup_container() {
             if ! ( babs_check_image "$registered" "$sif_filename" ); then
                 local q
                 q=$(printf %q "$ds_dir")
-                echo "ERROR: the registered image ${registered} failed the check above. Remove the container dataset, provide ${sif_filename} and rerun: chmod -R u+w ${q} && rm -rf ${q}" >&2
+                echo "ERROR: the registered image ${registered} failed the check above. If its output says the image is incomplete or damaged (not a mount, namespace or FUSE error on this host), remove the container dataset, provide ${sif_filename} and rerun: chmod -R u+w ${q} && rm -rf ${q}" >&2
                 exit 1
             fi
         else
