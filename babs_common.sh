@@ -247,12 +247,12 @@ babs_check_image() {
         echo "ERROR: apptainer is not on PATH, so ${src} cannot be checked. Load it (module load apptainer) and rerun." >&2
         exit 1
     fi
-    if ! labels=$(apptainer inspect --labels "$src" 2>&1); then
+    if ! labels=$("$appt" inspect --labels "$src" 2>&1); then
         echo "ERROR: apptainer cannot read ${src} as a container image:" >&2
         echo "$labels" >&2
         exit 1
     fi
-    if ! sif_list=$(apptainer sif list "$src" 2>&1); then
+    if ! sif_list=$("$appt" sif list "$src" 2>&1); then
         echo "ERROR: apptainer cannot list the SIF objects of ${src}:" >&2
         echo "$sif_list" >&2
         exit 1
