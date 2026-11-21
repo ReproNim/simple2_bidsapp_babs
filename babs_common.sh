@@ -173,6 +173,163 @@ babs_setup_env() {
     babs_require_pr369
 }
 
+# Copy an app image into the run directory and stop if the copy is not
+# complete. A copy cut short by a full disk or a quota would otherwise leave
+# a partial .sif that datalad containers-add registers for every job.
+# Usage: babs_copy_image <source> <destination>
+babs_copy_image() {
+    local src dest="$2"
+    # Resolve the source first, so a run-dir symlink that the search found is
+    # copied from its target rather than removed as the destination below.
+    src=$(readlink -f "$1")
+    local tmp="${dest}.partial"
+    local src_size tmp_size
+    # A relative BASE_DIR or SIF_SEARCH_DIRS entry resolves inside the run
+    # directory, so the source can be the destination itself; removing the
+    # destination below would delete the only image found. A symlink at the
+    # destination is only replaced, so remove it first.
+    # Compare resolved paths, not inodes: a hard link to the source in the run
+    # directory is a separate name that can be replaced safely.
+    [ ! -L "$dest" ] || rm -f "$dest"
+    if [ "$src" = "$(readlink -f "$dest")" ]; then
+        echo "ERROR: the image was found in the run directory itself (${src}); set BASE_DIR and SIF_SEARCH_DIRS to absolute paths." >&2
+        exit 1
+    fi
+    # Copy under a temporary name and rename only a complete copy, so a copy
+    # that is killed (time limit, node loss) never leaves a file at the final
+    # name for a rerun in the same run directory to accept.
+    # Remove the stale partial (it may be a symlink, which cp would write
+    # through) and any earlier copy at the final name, which is about to be
+    # replaced: keeping it while the new copy is written would need another
+    # image's worth of space.
+    rm -f "$tmp" "$dest"
+    if ! cp "$src" "$tmp"; then
+        rm -f "$tmp"
+        echo "ERROR: copying ${src} to ${dest} failed; removed the partial file." >&2
+        exit 1
+    fi
+    src_size=$(wc -c < "$src")
+    tmp_size=$(wc -c 2>/dev/null < "$tmp" || echo missing)
+    if [ "$src_size" != "$tmp_size" ]; then
+        rm -f "$tmp"
+        echo "ERROR: copy of ${src} is ${tmp_size} bytes, expected ${src_size}; removed the partial file." >&2
+        exit 1
+    fi
+    if ! mv -f "$tmp" "$dest"; then
+        rm -f "$tmp"
+        echo "ERROR: could not rename ${tmp} to ${dest}." >&2
+        exit 1
+    fi
+}
+
+# Stop before copying a source image that apptainer cannot read (a stray file
+# under the image's name), that is shorter than its own SIF descriptors say
+# (a build or copy cut short: the labels sit near the start of the file, so
+# inspect alone still reads them), that cannot run a command (a file of the
+# right size whose later blocks are missing, such as a sparse or zero-filled
+# copy: the root file system's tables sit at its end), whose source label
+# names another app than its filename, or whose version label names another
+# version than its filename. Copying it would pass the size check, and babs
+# init would put it into the project for every job. Only an X.Y.Z version
+# label is compared: images built before the app set its own version label
+# inherit the base image's, such as 22.04, even when they carry the app's
+# source and revision labels. Such an image copied under another version's
+# name is therefore not caught; every image from ants-nidm 0.2.2,
+# freesurfer-nidm 0.1.2 and mriqc-nidm 0.1.2 on carries its own label.
+# Usage: babs_check_image <source> <sif_filename>
+babs_check_image() {
+    local src="$1" sif_filename="$2" labels sif_list sif_end src_size label_version label_source run_out want=""
+    # type -P: the check runs the apptainer program through env below, which
+    # cannot run a shell function or alias of that name.
+    local appt
+    appt=$(type -P apptainer)
+    if [ -z "$appt" ]; then
+        echo "ERROR: apptainer is not on PATH, so ${src} cannot be checked. Load it (module load apptainer) and rerun." >&2
+        exit 1
+    fi
+    if ! labels=$("$appt" inspect --labels "$src" 2>&1); then
+        echo "ERROR: apptainer cannot read ${src} as a container image:" >&2
+        echo "$labels" >&2
+        exit 1
+    fi
+    if ! sif_list=$("$appt" sif list "$src" 2>&1); then
+        echo "ERROR: apptainer cannot list the SIF objects of ${src}:" >&2
+        echo "$sif_list" >&2
+        exit 1
+    fi
+    # The last object's end offset is the file size of a complete image.
+    sif_end=$(awk -F'|' 'NF >= 5 { split($4, p, "-"); e = p[2] + 0; if (e > m) m = e } END { printf "%.0f\n", m }' <<< "$sif_list")
+    src_size=$(wc -c < "$src")
+    if [ -z "$sif_end" ] || [ "$sif_end" = 0 ]; then
+        echo "ERROR: could not read the SIF object list of ${src}; apptainer sif list printed:" >&2
+        echo "$sif_list" >&2
+        exit 1
+    fi
+    if [ "$src_size" -lt "$sif_end" ]; then
+        echo "ERROR: ${src} is ${src_size} bytes, but its SIF objects end at byte ${sif_end}; the image is incomplete. Rebuild or recopy it." >&2
+        exit 1
+    fi
+    if [ "$src_size" -gt "$sif_end" ]; then
+        echo "ERROR: ${src} is ${src_size} bytes, longer than its SIF objects (they end at byte ${sif_end}); it is not a plain SIF image." >&2
+        exit 1
+    fi
+    # Without the APPTAINER_* and SINGULARITY_* settings meant for jobs and
+    # without home: a bind path, overlay or working directory missing on this
+    # host would fail the run and look like a damaged image.
+    local unset_args=() var
+    for var in $(compgen -v); do
+        case "$var" in APPTAINER_*|SINGULARITY_*) unset_args+=(-u "$var") ;; esac
+    done
+    if ! run_out=$(env "${unset_args[@]}" "$appt" exec --no-home "$src" true 2>&1); then
+        echo "ERROR: apptainer could not run a command in ${src}. Its output below names the cause: a file system that cannot be read (\"executable file not found\", squashfs errors) means the image is damaged or incomplete, so rebuild or recopy it; a mount, namespace or FUSE error means this host cannot run the image." >&2
+        echo "$run_out" >&2
+        exit 1
+    fi
+    # The source label is the app repository's URL, whose last part is the
+    # image name without its version (.../mriqc-nidm_bidsapp for
+    # mriqc-nidm_bidsapp-0.1.5.sif).
+    label_source=$(awk '$1 == "org.opencontainers.image.source:" {print $2}' <<< "$labels")
+    label_source="${label_source%/}"
+    label_source="${label_source%.git}"
+    if [ -n "$label_source" ] && [[ "$sif_filename" =~ ^(.+)-[0-9]+\.[0-9]+\.[0-9]+\.sif$ ]] \
+       && [ "${label_source##*/}" != "${BASH_REMATCH[1]}" ]; then
+        echo "ERROR: ${src} was built from ${label_source}, but its name asks for ${BASH_REMATCH[1]}." >&2
+        exit 1
+    fi
+    label_version=$(awk '$1 == "org.opencontainers.image.version:" {print $2}' <<< "$labels")
+    [[ "$label_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 0
+    if [[ "$sif_filename" =~ _bidsapp-([0-9]+\.[0-9]+\.[0-9]+)\.sif$ ]]; then
+        want="${BASH_REMATCH[1]}"
+    fi
+    if [ -n "$label_version" ] && [ -n "$want" ] && [ "$label_version" != "$want" ]; then
+        echo "ERROR: ${src} is labelled version ${label_version}, but its name asks for ${want}." >&2
+        exit 1
+    fi
+}
+
+# Compare a registered container image byte for byte with the source image
+# (checked by babs_check_image first), so a short or damaged registration, or
+# a source rebuilt since the container was registered, stops the run.
+# Usage: babs_check_registered <registered image> <source image> <container dataset dir> [file to remove on failure]
+babs_check_registered() {
+    local registered="$1" src="$2" ds_dir="$3" leftover="${4:-}" got q
+    if [ -e "$registered" ] && cmp -s "$src" "$registered"; then
+        return 0
+    fi
+    if [ -n "$leftover" ] && ! rm -f "$leftover"; then
+        echo "WARNING: could not remove ${leftover}." >&2
+    fi
+    if [ -e "$registered" ]; then
+        got="($(wc -c < "$registered") bytes) differs from"
+    else
+        got="is missing; expected a copy of"
+    fi
+    q=$(printf %q "$ds_dir")
+    echo "ERROR: the registered image ${registered} ${got} ${src} ($(wc -c < "$src") bytes). If ${src} was rebuilt since it was registered, the registered copy is the old build. Remove the container dataset and rerun: chmod -R u+w ${q} && rm -rf ${q}" >&2
+    echo "A BABS project made from this run directory clones that dataset when it submits jobs; do not remove it while such a project still has jobs to submit." >&2
+    exit 1
+}
+
 # Generic container setup
 # Usage: babs_setup_container <app_name> <container_ds_name> <container_name> <sif_filename> [sif_alt_paths...]
 babs_setup_container() {
@@ -190,39 +347,56 @@ babs_setup_container() {
     read -ra extra_dirs <<< "${SIF_SEARCH_DIRS:-}"
     sif_alt_paths+=("${extra_dirs[@]}")
 
-    # Check if container setup is already done
-    if [ -d "${PWD}/${container_ds_name}" ] && \
-       [ -f "${PWD}/${container_ds_name}/.datalad/config" ] && \
-       grep -q "${container_name}" "${PWD}/${container_ds_name}/.datalad/config" 2>/dev/null; then
+    # Find the image: BASE_DIR first, then the alternative paths.
+    local src="" dir
+    for dir in "${BASE_DIR}" "${sif_alt_paths[@]}"; do
+        if [ -f "${dir}/${sif_filename}" ]; then
+            # Absolute and resolved: setup changes directory, and a run-dir
+            # symlink found here is replaced by a copy of its target.
+            src=$(readlink -f "${dir}/${sif_filename}")
+            break
+        fi
+    done
+    # Check if container setup is already done. An earlier run may have
+    # registered a short copy and stopped, so check it again here, after
+    # checking the source it is compared with.
+    local ds_dir="${PWD}/${container_ds_name}"
+    local registered="${ds_dir}/.datalad/environments/${container_name}/image"
+    if [ -d "$ds_dir" ] && \
+       [ -f "${ds_dir}/.datalad/config" ] && \
+       grep -q "${container_name}" "${ds_dir}/.datalad/config" 2>/dev/null; then
+        if [ -z "$src" ]; then
+            # Nothing to compare with: check the registered image on its own,
+            # so a short registration left by an earlier run still stops.
+            echo "WARNING: ${sif_filename} not found in BASE_DIR or SIF_SEARCH_DIRS, so the registered image is checked on its own, not compared with its source." >&2
+            if ! ( babs_check_image "$registered" "$sif_filename" ); then
+                local q
+                q=$(printf %q "$ds_dir")
+                echo "ERROR: the registered image ${registered} failed the check above. If its output says the image is incomplete or damaged (not a mount, namespace or FUSE error on this host), remove the container dataset, provide ${sif_filename} and rerun: chmod -R u+w ${q} && rm -rf ${q}" >&2
+                exit 1
+            fi
+        else
+            babs_check_image "$src" "$sif_filename"
+            babs_check_registered "$registered" "$src" "$ds_dir"
+        fi
         echo "Container already set up, skipping container setup steps."
-        babs_log_image_revision "${PWD}/${container_ds_name}/.datalad/environments/${container_name}/image"
+        babs_log_image_revision "${ds_dir}/.datalad/environments/${container_name}/image"
         return 0
+    fi
+
+    if [ -z "$src" ]; then
+        echo "ERROR: ${sif_filename} not found in BASE_DIR or SIF_SEARCH_DIRS. Build it, or choose another existing version (ANTS_VERSION, FS_VERSION, MRIQC_VERSION)." >&2
+        exit 1
     fi
 
     echo "Setting up container..."
 
-    # Find and copy SIF file
-    if [ ! -f "${PWD}/${sif_filename}" ]; then
-        # Try BASE_DIR first
-        if [ -f "${BASE_DIR}/${sif_filename}" ]; then
-            echo "Copying ${sif_filename} from BASE_DIR"
-            cp "${BASE_DIR}/${sif_filename}" .
-        else
-            # Try alternative paths
-            for alt_path in "${sif_alt_paths[@]}"; do
-                if [ -f "${alt_path}/${sif_filename}" ]; then
-                    echo "Copying ${sif_filename} from ${alt_path}"
-                    cp "${alt_path}/${sif_filename}" .
-                    break
-                fi
-            done
-
-            if [ ! -f "${PWD}/${sif_filename}" ]; then
-                echo "ERROR: ${sif_filename} not found in BASE_DIR or SIF_SEARCH_DIRS. Build it, or choose another existing version (ANTS_VERSION, FS_VERSION, MRIQC_VERSION)." >&2
-                exit 1
-            fi
-        fi
-    fi
+    # Copy the image even when a file of that name is already in the run
+    # directory: a copy cut short before babs_copy_image existed, or a source
+    # rebuilt since, would otherwise be used unchecked.
+    babs_check_image "$src" "$sif_filename"
+    echo "Copying ${sif_filename} from ${dir}"
+    babs_copy_image "$src" "${PWD}/${sif_filename}"
 
     babs_log_image_revision "${PWD}/${sif_filename}"
 
@@ -234,11 +408,31 @@ babs_setup_container() {
     cd "${container_ds_name}" || exit 1
 
     # Add the container if it's not already added
+    # containers-add makes a second full copy of the image, so it can run out
+    # of space or quota where the first copy did not. Stop on its failure, and
+    # check the registered copy against the run directory copy before that
+    # one is removed.
     if ! datalad containers-list 2>/dev/null | grep -q "${container_name}"; then
-        datalad containers-add \
+        if ! datalad containers-add \
             --url "${PWD}/../${sif_filename}" \
-            "${container_name}"
+            "${container_name}"; then
+            if ! rm -f "../${sif_filename}"; then
+                echo "WARNING: could not remove the run directory copy ${PWD%/*}/${sif_filename}." >&2
+            fi
+            echo "ERROR: datalad containers-add failed for ${container_name}." >&2
+            # containers-add copies the image before it writes the config; a
+            # copy it has already annexed (a symlink into the annex) is
+            # read-only and blocks a rerun. A plain partial file does not.
+            if [ -L ".datalad/environments/${container_name}/image" ]; then
+                local q
+                q=$(printf %q "$PWD")
+                echo "It left a partial registration. Remove the container dataset and rerun: chmod -R u+w ${q} && rm -rf ${q}" >&2
+            fi
+            exit 1
+        fi
     fi
+    babs_check_registered "${PWD}/.datalad/environments/${container_name}/image" \
+        "$src" "$PWD" "../${sif_filename}"
 
     cd ../ || exit 1
 

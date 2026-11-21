@@ -73,7 +73,10 @@ case "${1:-}" in
             [ "$1" = "--url" ] && url="$2"
             shift
         done
-        echo "containers-add image=$(cat "$url") name=${name}" >> "$STUB_DIR/calls.log" ;;
+        echo "containers-add image=$(cat "$url") name=${name}" >> "$STUB_DIR/calls.log"
+        # Register a copy, as datalad does, for the wrapper's size check.
+        mkdir -p ".datalad/environments/${name}"
+        cp "$url" ".datalad/environments/${name}/image" ;;
     run-procedure) [ -z "${STUB_TEXT2GIT_FAIL:-}" ] || exit 1 ;;
     push)
         echo "datalad-push" >> "$STUB_DIR/calls.log"
@@ -83,8 +86,16 @@ esac
 exit 0
 EOF
 
-# apptainer: `inspect` finds no revision label.
-printf '#!/bin/bash\nexit 0\n' > "$STUBS/apptainer"
+# apptainer: `inspect` finds no labels; `sif list` reports a complete image, its
+# last object ending at the file size.
+cat > "$STUBS/apptainer" <<'EOF'
+#!/bin/bash
+if [ "$1 $2" = "sif list" ]; then
+    echo "ID   |GROUP   |LINK    |SIF POSITION (start-end)  |TYPE"
+    echo "1    |1       |NONE    |0-$(wc -c < "$3")         |FS (Squashfs/*System/amd64)"
+fi
+exit 0
+EOF
 chmod +x "$STUBS/babs" "$STUBS/datalad" "$STUBS/apptainer"
 
 # The wrappers source ~/.bashrc and call micromamba and module.

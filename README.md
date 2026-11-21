@@ -51,7 +51,7 @@ Apptainer (or Singularity) for running the containers, and `git-annex` — the w
 
 ### 3. The container image
 
-Images are named by version: `<app>_bidsapp-X.Y.Z.sif`, e.g. `freesurfer-nidm_bidsapp-0.1.0.sif`. Each wrapper looks for its image by exact filename in `BASE_DIR`, then in `SIF_SEARCH_DIRS` (see `.env` below); a missing image stops the run. Build the image from the matching app repository (each has a `Singularity` recipe and a `setup.py` helper) and drop it next to the scripts.
+Images are named by version: `<app>_bidsapp-X.Y.Z.sif`, e.g. `freesurfer-nidm_bidsapp-0.1.0.sif`. Each wrapper looks for its image by exact filename in `BASE_DIR`, then in `SIF_SEARCH_DIRS` (see `.env` below); a missing image stops the run. Before copying it, the wrapper checks that apptainer can read the image and run a command in it, that the file ends where its SIF objects end, and that its `org.opencontainers.image.source` and `org.opencontainers.image.version` labels, when present, name the same app and version as the filename. After registering it, the wrapper compares the registered copy byte for byte with the source, also on reruns; a rerun whose source image is gone checks the registered copy on its own. Any failed check stops the run with a message saying what to do. Build the image from the matching app repository (each has a `Singularity` recipe and a `setup.py` helper) and drop it next to the scripts.
 
 One variable per app picks the version, and with it the image file, the container name and the zip suffix, so outputs are always labelled with the version that produced them:
 
@@ -67,7 +67,7 @@ When an app's outputs change, bump its version in the app repository, build the 
 
 ### 4. A `.env` file
 
-The wrappers source `.env` from the **current working directory**, so always run them from this repo's root. It is plain bash (no spaces around `=`), so `$HOME` and friends work. A template — replace `<scratch>` with your cluster's scratch/work filesystem and `<data>` with wherever the study's DataLad tree lives. Container images are looked up by exact filename in `BASE_DIR`, then in `SIF_SEARCH_DIRS`; a missing image stops the run:
+The wrappers source `.env` from the **current working directory**, so always run them from this repo's root. It is plain bash (no spaces around `=`), so `$HOME` and friends work. A template — replace `<scratch>` with your cluster's scratch/work filesystem and `<data>` with wherever the study's DataLad tree lives. Container images are looked up by exact filename in `BASE_DIR`, then in `SIF_SEARCH_DIRS`; a missing or damaged image stops the run:
 
 ```bash
 BASE_DIR="$HOME/simple2_bidsapp_babs"                    # where you cloned this repo
@@ -209,11 +209,12 @@ Everything else — argument parsing, container dataset setup, config substituti
 
 ## Tests
 
-Two shell scripts. Neither needs babs, a cluster or a `.env`:
+Three shell scripts. None needs babs, a cluster or a `.env`:
 
 ```bash
 bash tests/test_babs_pr369.sh         # config templating and the checks in babs_common.sh
 bash tests/test_wrapper_versions.sh   # each wrapper uses one version for its image, container name and zips
+bash tests/test_image_copy.sh          # a damaged or mislabelled image, or a failed, short or changed copy, stops setup
 ```
 
-`test_wrapper_versions.sh` runs the three wrappers with stand-ins for `babs`, `datalad` and `apptainer` on `PATH`, in a temporary directory, so nothing is submitted and no image or dataset is read. Run both after changing a wrapper, `babs_common.sh` or a config template, and after merging `main` into a long-lived branch.
+`test_wrapper_versions.sh` runs the three wrappers with stand-ins for `babs`, `datalad` and `apptainer` on `PATH`, in a temporary directory, so nothing is submitted and no image or dataset is read. Run all three after changing a wrapper, `babs_common.sh` or a config template, and after merging `main` into a long-lived branch.
