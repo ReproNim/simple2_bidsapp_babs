@@ -184,7 +184,11 @@ babs_copy_image() {
     # Copy under a temporary name and rename only a complete copy, so a copy
     # that is killed (time limit, node loss) never leaves a file at the final
     # name for a rerun in the same run directory to accept.
-    rm -f "$tmp"
+    # Remove the stale partial (it may be a symlink, which cp would write
+    # through) and any earlier copy at the final name, which is about to be
+    # replaced: keeping it while the new copy is written would need another
+    # image's worth of space.
+    rm -f "$tmp" "$dest"
     if ! cp "$src" "$tmp"; then
         rm -f "$tmp"
         echo "ERROR: copying ${src} to ${dest} failed; removed the partial file." >&2
@@ -208,7 +212,9 @@ babs_copy_image() {
 # init would put it into the project for every job. Only an X.Y.Z version
 # label is compared: images built before the app set its own version label
 # inherit the base image's, such as 22.04, even when they carry the app's
-# source and revision labels.
+# source and revision labels. Such an image copied under another version's
+# name is therefore not caught; every image from ants-nidm 0.2.2,
+# freesurfer-nidm 0.1.2 and mriqc-nidm 0.1.2 on carries its own label.
 # Usage: babs_check_image <source> <sif_filename>
 babs_check_image() {
     local src="$1" sif_filename="$2" labels sif_list sif_end src_size label_version want=""
@@ -229,8 +235,17 @@ babs_check_image() {
     # The last object's end offset is the file size of a complete image.
     sif_end=$(awk -F'|' 'NF >= 5 { split($4, p, "-"); e = p[2] + 0; if (e > m) m = e } END { printf "%.0f\n", m }' <<< "$sif_list")
     src_size=$(wc -c < "$src")
-    if [ "$sif_end" != "$src_size" ]; then
+    if [ -z "$sif_end" ] || [ "$sif_end" = 0 ]; then
+        echo "ERROR: could not read the SIF object list of ${src}; apptainer sif list printed:" >&2
+        echo "$sif_list" >&2
+        exit 1
+    fi
+    if [ "$src_size" -lt "$sif_end" ]; then
         echo "ERROR: ${src} is ${src_size} bytes, but its SIF objects end at byte ${sif_end}; the image is incomplete. Rebuild or recopy it." >&2
+        exit 1
+    fi
+    if [ "$src_size" -gt "$sif_end" ]; then
+        echo "ERROR: ${src} is ${src_size} bytes, longer than its SIF objects (they end at byte ${sif_end}); it is not a plain SIF image." >&2
         exit 1
     fi
     label_version=$(awk '$1 == "org.opencontainers.image.version:" {print $2}' <<< "$labels")
@@ -244,12 +259,14 @@ babs_check_image() {
     fi
 }
 
-# Compare a registered container image with the image it came from.
-# Usage: babs_check_registered <registered image> <expected bytes> <container dataset dir>
+# Compare a registered container image with the image it came from, by
+# size only: a rebuilt image of the same version and the same size would pass.
+# Usage: babs_check_registered <registered image> <expected bytes> <container dataset dir> [file to remove on failure]
 babs_check_registered() {
-    local registered="$1" want_size="$2" ds_dir="$3" got_size
+    local registered="$1" want_size="$2" ds_dir="$3" leftover="${4:-}" got_size
     got_size=$(wc -c 2>/dev/null < "$registered" || echo missing)
     if [ "$want_size" != "$got_size" ]; then
+        [ -z "$leftover" ] || rm -f "$leftover"
         echo "ERROR: the registered image ${registered} is ${got_size} bytes, expected ${want_size}. Remove the container dataset and rerun: chmod -R u+w '${ds_dir}' && rm -rf '${ds_dir}'" >&2
         exit 1
     fi
@@ -324,12 +341,13 @@ babs_setup_container() {
         if ! datalad containers-add \
             --url "${PWD}/../${sif_filename}" \
             "${container_name}"; then
-            echo "ERROR: datalad containers-add failed for ${container_name}." >&2
+            rm -f "../${sif_filename}"
+            echo "ERROR: datalad containers-add failed for ${container_name}; removed the run directory copy of the image." >&2
             exit 1
         fi
     fi
     babs_check_registered "${PWD}/.datalad/environments/${container_name}/image" \
-        "$(wc -c < "../${sif_filename}")" "$PWD"
+        "$(wc -c < "../${sif_filename}")" "$PWD" "../${sif_filename}"
 
     cd ../ || exit 1
 

@@ -20,6 +20,11 @@ cat > "$STUBS/cp" <<STUB
 #!/bin/bash
 dest="\$2"
 [ -d "\$dest" ] && dest="\$dest/\$(basename "\$1")"
+# CP_NO_FINAL=1: fail when the final name is still occupied while the copy is
+# written, as an earlier copy kept there doubles the space a copy needs.
+if [ -n "\${CP_NO_FINAL:-}" ] && [ -e "\${dest%.partial}" ]; then
+    echo "final name still occupied during the copy" >&2; exit 1
+fi
 case "\${CP_MODE:-ok}" in
     ok) exec "$REAL_CP" "\$@" ;;
     fail) head -c 10 "\$1" > "\$dest"; exit 1 ;;
@@ -65,6 +70,7 @@ case "$1 $2" in
         [ -z "${APPT_SOURCE:-}" ] || echo "org.opencontainers.image.source: $APPT_SOURCE"
         [ -z "${APPT_VERSION:-}" ] || echo "org.opencontainers.image.version: $APPT_VERSION" ;;
     "sif list")
+        if [ -n "${APPT_SIF_GARBLED:-}" ]; then echo "1 1 NONE 0-64 FS"; exit 0; fi
         end="${APPT_SIF_END:-$(wc -c < "$3")}"
         echo "ID   |GROUP   |LINK    |SIF POSITION (start-end)  |TYPE"
         echo "1    |1       |NONE    |32-64                     |Def.FILE"
@@ -170,16 +176,24 @@ run_case ok run_basever app_bidsapp-1.2.3.sif APPT_VERSION=22.04 APPT_SOURCE=htt
 # A source shorter than its SIF objects say (a build or copy cut short) is
 # not copied.
 run_case ok run_truncated app.sif APPT_SIF_END=99999
-expect_stop run_truncated "truncated source" 'is 4096 bytes, but its SIF objects end at byte 99999'
+expect_stop run_truncated "truncated source" 'is 4096 bytes, but its SIF objects end at byte 99999; the image is incomplete'
+# A file longer than its SIF objects, and a sif list that cannot be read, are
+# refused with their own messages.
+run_case ok run_long app.sif APPT_SIF_END=100
+expect_stop run_long "file longer than its SIF objects" 'longer than its SIF objects (they end at byte 100)'
+run_case ok run_garbled app.sif APPT_SIF_GARBLED=1
+expect_stop run_garbled "unreadable sif list" '^ERROR: could not read the SIF object list'
 ! grep -q containers-add "$TEST_TMPDIR/calls.log" || { echo "FAIL: truncated source reached containers-add"; exit 1; }
 
 # A failed or short registration by containers-add stops setup.
 run_case ok run_dlfail app.sif DL_MODE=fail
 expect_stop run_dlfail "failed containers-add" '^ERROR: datalad containers-add failed'
+[ ! -e "$TEST_TMPDIR/run_dlfail/app.sif" ] || { echo "FAIL: failed containers-add left the run directory copy"; exit 1; }
 run_case ok run_dlshort app.sif DL_MODE=short
 expect_stop run_dlshort "short registered image" '^ERROR: the registered image .* is 10 bytes, expected 4096'
 grep -q "chmod -R u+w '.*/run_dlshort/ants-ds' && rm -rf '.*/run_dlshort/ants-ds'" "$TEST_TMPDIR/run_dlshort.out" \
     || { echo "FAIL: short registered image error does not give the removal command"; exit 1; }
+[ ! -e "$TEST_TMPDIR/run_dlshort/app.sif" ] || { echo "FAIL: short registration left the run directory copy"; exit 1; }
 # A rerun in the same run directory finds the container registered and must
 # check that copy again rather than skip setup.
 run_case ok run_dlshort
@@ -193,7 +207,7 @@ run_case ok run_ok
 # babs_copy_image existed leaves, is replaced by a full copy.
 mkdir -p "$TEST_TMPDIR/run_oldpartial"
 head -c 10 /dev/zero > "$TEST_TMPDIR/run_oldpartial/app.sif"
-run_case ok run_oldpartial
+run_case ok run_oldpartial app.sif CP_NO_FINAL=1
 [ "$ec" -eq 0 ] || { echo "FAIL: rerun over a short app.sif exited $ec"; cat "$TEST_TMPDIR/run_oldpartial.out"; exit 1; }
 [ "$(wc -c < "$TEST_TMPDIR/run_oldpartial/ants-ds/.datalad/environments/ants-container/image")" = 4096 ] \
     || { echo "FAIL: a short app.sif already in the run dir was registered"; exit 1; }
