@@ -127,7 +127,7 @@ BABS_ENV="${BABS_ENV:-babs}"
 # NIDM derivative to use as the augmentation source. `derivatives/nidm` does not
 # exist in the satra study tree; the real shared resource is versioned.
 # Override with BABS_NIDM_DERIV to point at a different NIDM release.
-BABS_NIDM_DERIV="${BABS_NIDM_DERIV:-nidm_4.5.0}"
+BABS_NIDM_DERIV="${BABS_NIDM_DERIV:-nidm_5.0.0}"
 
 # Fail fast if the active babs cannot honour the BIDS-study layout keys the
 # configs set. This is worth a hard check rather than a README line, because the
@@ -523,6 +523,32 @@ babs_require_min_version() {
     local var_name="$1" version="$2" min="$3" needed_by="$4"
     if [ "$(printf '%s\n%s\n' "$min" "$version" | sort -V | head -1)" != "$min" ]; then
         echo "ERROR: ${needed_by} needs ${var_name} ${min} or later, got ${version}" >&2
+        exit 1
+    fi
+}
+
+# The input records and the PyNIDM inside the image must come from the same
+# major PyNIDM release (README, NIDM versions). Judged only when
+# BABS_NIDM_DERIV is named nidm_<X.Y.Z>; another name (nidm, nidm_5.0,
+# nidm_5.0.0-fix) is deliberately not checked. Each wrapper passes the first
+# app version built on PyNIDM 5; a later PyNIDM release needs a second
+# boundary here, and until then its folders are refused.
+# Usage: babs_require_nidm_match <VAR_NAME> <version> <first version on PyNIDM 5>
+babs_require_nidm_match() {
+    local var_name="$1" version="$2" pynidm5_from="$3" image_major deriv_major
+    [[ "$BABS_NIDM_DERIV" =~ ^nidm_([0-9]+)\.[0-9]+\.[0-9]+$ ]] || return 0
+    deriv_major=$((10#${BASH_REMATCH[1]}))
+    if [ "$deriv_major" != 4 ] && [ "$deriv_major" != 5 ]; then
+        echo "ERROR: BABS_NIDM_DERIV=${BABS_NIDM_DERIV} holds records written by PyNIDM ${deriv_major}, and no image boundary is known for that release. Add one to babs_require_nidm_match in babs_common.sh." >&2
+        exit 1
+    fi
+    if [ "$(printf '%s\n%s\n' "$pynidm5_from" "$version" | sort -V | head -1)" = "$pynidm5_from" ]; then
+        image_major=5
+    else
+        image_major=4
+    fi
+    if [ "$deriv_major" != "$image_major" ]; then
+        echo "ERROR: ${var_name}=${version} runs PyNIDM ${image_major}, but BABS_NIDM_DERIV=${BABS_NIDM_DERIV} holds records written by PyNIDM ${deriv_major}. Use images from ${pynidm5_from} on with nidm_5.0.0, or earlier images with nidm_4.5.0." >&2
         exit 1
     fi
 }

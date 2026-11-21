@@ -13,7 +13,7 @@
 #
 # Optional environment variable:
 #   RUN_DATE=YYMMDD - Use specific date instead of auto-generated
-#   FS_VERSION=X.Y.Z - Run freesurfer-nidm_bidsapp-X.Y.Z.sif (default 0.1.3);
+#   FS_VERSION=X.Y.Z - Run freesurfer-nidm_bidsapp-X.Y.Z.sif (default 0.1.4);
 #                         also sets the container name and zip version
 
 # Get the directory where this script is located
@@ -37,10 +37,20 @@ CONTAINER_DS_NAME="freesurfer-nidm_bidsapp-container"
 # --skip-freesurfer, the site's BIDS dataset (T1w content fetched) as input,
 # --nidm-input-dir set to the site's input NIDM, and a copy of each subject's
 # harvested freesurfer/ directory at <output_dir>/sub-<id>[/ses-<x>]/freesurfer.
+# 0.1.4: PyNIDM 5.0.0 inside the image; the converter finds the subject in
+# input NIDM written by PyNIDM 5, matching ids without the sub- prefix and
+# leading zeros. Before recon-all, the job fails when the input NIDM holds
+# other subjects but not this one, has several nodes for this subject that
+# cannot be told apart, has no nidm:Project, cannot be parsed, or was never
+# fetched. A missing input NIDM is still only a warning. An explicit
+# --nidm-input-dir that is missing or empty is a usage error. A failed
+# conversion leaves no nidm.ttl of its own. Build it from the
+# freesurfer-nidm_bidsapp v0.1.4 tag.
 # One variable names the image, the container and the zip version, so a run
 # cannot label one version's outputs with another's number.
-FS_VERSION="${FS_VERSION:-0.1.3}"
+FS_VERSION="${FS_VERSION:-0.1.4}"
 babs_resolve_version FS_VERSION "$FS_VERSION"
+babs_require_nidm_match FS_VERSION "$FS_VERSION" 0.1.4
 CONTAINER_NAME="freesurfer-nidm-bidsapp-${ZIP_VERSION}"
 SIF_FILENAME="freesurfer-nidm_bidsapp-${FS_VERSION}.sif"
 SIF_ALT_PATHS=()   # searched after BASE_DIR; add more via SIF_SEARCH_DIRS in .env
