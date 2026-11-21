@@ -181,6 +181,13 @@ babs_copy_image() {
     local src="$1" dest="$2"
     local tmp="${dest}.partial"
     local src_size tmp_size
+    # A relative BASE_DIR or SIF_SEARCH_DIRS entry resolves inside the run
+    # directory, so the source can be the destination itself; removing the
+    # destination below would delete the only image found.
+    if [ "$src" -ef "$dest" ]; then
+        echo "ERROR: the image was found in the run directory itself (${src}); set BASE_DIR and SIF_SEARCH_DIRS to absolute paths." >&2
+        exit 1
+    fi
     # Copy under a temporary name and rename only a complete copy, so a copy
     # that is killed (time limit, node loss) never leaves a file at the final
     # name for a rerun in the same run directory to accept.

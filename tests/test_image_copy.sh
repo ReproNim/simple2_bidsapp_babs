@@ -212,4 +212,13 @@ run_case ok run_oldpartial app.sif CP_NO_FINAL=1
 [ "$(wc -c < "$TEST_TMPDIR/run_oldpartial/ants-ds/.datalad/environments/ants-container/image")" = 4096 ] \
     || { echo "FAIL: a short app.sif already in the run dir was registered"; exit 1; }
 
+# A relative search directory that resolves to the run directory finds the
+# destination itself: stop without deleting it.
+mkdir -p "$TEST_TMPDIR/run_self"
+head -c 4096 /dev/zero > "$TEST_TMPDIR/run_self/app.sif"
+run_case ok run_self app.sif BASE_DIR=/nonexistent SIF_SEARCH_DIRS=.
+expect_stop run_self "source inside the run directory" '^ERROR: the image was found in the run directory itself'
+[ "$(wc -c < "$TEST_TMPDIR/run_self/app.sif")" = 4096 ] \
+    || { echo "FAIL: the image found in the run directory was deleted"; exit 1; }
+
 echo "PASS: test_image_copy"
