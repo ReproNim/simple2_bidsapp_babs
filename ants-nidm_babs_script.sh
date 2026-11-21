@@ -49,8 +49,8 @@ CONTAINER_DS_NAME="ants-nidm_bidsapp-container"
 # segmentation. --method quick now initialises from the plain images, so its
 # labels can differ from 0.2.2: on most subjects within run-to-run variation,
 # but individual labels can change on some subjects. The fusion code is
-# unchanged; fusion reruns differ from 0.2.2 only by FireANTs' run-to-run
-# variation.
+# unchanged; fusion segmentations differ from 0.2.2 only by FireANTs'
+# run-to-run variation.
 # Build it from the ants-nidm_bidsapp v0.2.3 tag with scripts/build_sif.sbatch
 # under this name.
 # Older images reproduce older runs: the Caltech babs-ants-nidm-0-2-0
