@@ -127,7 +127,7 @@ BABS_ENV="${BABS_ENV:-babs}"
 # NIDM derivative to use as the augmentation source. `derivatives/nidm` does not
 # exist in the satra study tree; the real shared resource is versioned.
 # Override with BABS_NIDM_DERIV to point at a different NIDM release.
-BABS_NIDM_DERIV="${BABS_NIDM_DERIV:-nidm_4.5.0}"
+BABS_NIDM_DERIV="${BABS_NIDM_DERIV:-nidm_5.0.0}"
 
 # Fail fast if the active babs cannot honour the BIDS-study layout keys the
 # configs set. This is worth a hard check rather than a README line, because the

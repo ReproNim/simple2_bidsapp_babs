@@ -201,11 +201,11 @@ $(calls)"
     # and a babs submit there would run the first run's version and inputs.
     run_wrapper "${app}_rerun" "$script" "9.8.6 9.8.7" "${version_var}=9.8.6"
     if [ "$STATUS" -ne 0 ] || [ "$(grep -c '^babs-init' "$CASE_DIR/stub/calls.log")" -ne 1 ] \
-        || ! grep -q 'derivatives/nidm_4\.5\.0"' "$CASE_DIR/stub/config.yaml" 2>/dev/null; then
-        fail "$script did not complete its first run with ${version_var}=9.8.6 on nidm_4.5.0 (exit $STATUS):
+        || ! grep -q 'derivatives/nidm_5\.0\.0"' "$CASE_DIR/stub/config.yaml" 2>/dev/null; then
+        fail "$script did not complete its first run with ${version_var}=9.8.6 on nidm_5.0.0 (exit $STATUS):
 $(calls)"
     fi
-    run_wrapper "${app}_rerun" "$script" "9.8.6 9.8.7" "${version_var}=9.8.7" BABS_NIDM_DERIV=nidm_5.0.0
+    run_wrapper "${app}_rerun" "$script" "9.8.6 9.8.7" "${version_var}=9.8.7" BABS_NIDM_DERIV=nidm_4.5.0
     if [ "$STATUS" -eq 0 ] || [ -n "$(calls)" ] \
         || [[ "$OUTPUT" != *"babs-${app}\" && babs submit"* ]]; then
         fail "$script rerun over site A's existing project (exit $STATUS) did not stop before babs with the command to submit into it:
@@ -217,12 +217,12 @@ $OUTPUT"
     # run directory. It must render its own: zip under 9.8.7, not 9.8.6, and
     # read the NIDM derivative it was given, not the first run's.
     rm_project
-    run_wrapper "${app}_rerun" "$script" "9.8.6 9.8.7" "${version_var}=9.8.7" BABS_NIDM_DERIV=nidm_5.0.0
+    run_wrapper "${app}_rerun" "$script" "9.8.6 9.8.7" "${version_var}=9.8.7" BABS_NIDM_DERIV=nidm_4.5.0
     if [ "$STATUS" -ne 0 ] \
         || ! grep -qx '    ${subid}: "9-8-7"' "$CASE_DIR/stub/config.yaml" 2>/dev/null \
-        || ! grep -q 'derivatives/nidm_5\.0\.0"' "$CASE_DIR/stub/config.yaml" 2>/dev/null \
-        || grep -q 'nidm_4\.5\.0' "$CASE_DIR/stub/config.yaml" 2>/dev/null; then
-        fail "$script rerun with ${version_var}=9.8.7 BABS_NIDM_DERIV=nidm_5.0.0 (exit $STATUS) did not give babs init a config of its own:
+        || ! grep -q 'derivatives/nidm_4\.5\.0"' "$CASE_DIR/stub/config.yaml" 2>/dev/null \
+        || grep -q 'nidm_5\.0\.0' "$CASE_DIR/stub/config.yaml" 2>/dev/null; then
+        fail "$script rerun with ${version_var}=9.8.7 BABS_NIDM_DERIV=nidm_4.5.0 (exit $STATUS) did not give babs init a config of its own:
 $(grep -E 'subid|origin_url' "$CASE_DIR/stub/config.yaml" 2>/dev/null || echo '(no config reached babs init)')"
     fi
 
@@ -232,11 +232,11 @@ $(grep -E 'subid|origin_url' "$CASE_DIR/stub/config.yaml" 2>/dev/null || echo '(
     if [ -z "$rerun_config" ]; then
         fail "$script left no config in its run dir to rerun against"
     else
-        sed -i 's|nidm_5\.0\.0|nidm_4.5.0|' "$rerun_config"
+        sed -i 's|nidm_4\.5\.0|nidm_5.0.0|' "$rerun_config"
         chmod a-w "$rerun_config"
         rm_project
-        run_wrapper "${app}_rerun" "$script" "9.8.6 9.8.7" "${version_var}=9.8.7" BABS_NIDM_DERIV=nidm_5.0.0
-        if [ "$STATUS" -ne 0 ] || ! grep -q 'derivatives/nidm_5\.0\.0"' "$CASE_DIR/stub/config.yaml" 2>/dev/null; then
+        run_wrapper "${app}_rerun" "$script" "9.8.6 9.8.7" "${version_var}=9.8.7" BABS_NIDM_DERIV=nidm_4.5.0
+        if [ "$STATUS" -ne 0 ] || ! grep -q 'derivatives/nidm_4\.5\.0"' "$CASE_DIR/stub/config.yaml" 2>/dev/null; then
             fail "$script rerun over a read-only config (exit $STATUS) did not give babs init a fresh config:
 $(grep origin_url "$CASE_DIR/stub/config.yaml" 2>/dev/null || echo '(no config reached babs init)')"
         fi

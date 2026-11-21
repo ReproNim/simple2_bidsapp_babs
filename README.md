@@ -17,7 +17,7 @@ The scripts expect a study dataset laid out the way the SIMPLE2 DataLad tree is:
 ```
 <DATALAD_SET_DIR>/<study>/site-<SITE>/
 ├── sourcedata/raw          # the BIDS input dataset
-├── derivatives/nidm_4.5.0  # existing per-subject NIDM records the apps augment
+├── derivatives/nidm_5.0.0  # existing per-subject NIDM records the apps augment
 ├── derivatives/babs-<app>  # <- a run creates this (the BABS project)
 └── code/post_babs.sh       # the study's harvest script (see Post-processing)
 ```
@@ -130,7 +130,7 @@ All optional, all environment variables:
 | `BABS_LIST_SUB_FILE=/path.csv` | Restrict the project to the subjects in a CSV — `sub_id` column, plus `ses_id` for session-level projects. For pilots and re-runs, and **effectively required for any site where some subjects/sessions lack the required modality**: babs does *not* apply the config's `required_files` when it builds the inclusion list ([babs#314](https://github.com/PennLINC/babs/issues/314)), so without a pre-computed list every `sub-*/ses-*` directory becomes a job, including ones with no T1w that can only fail. Build the list by globbing the raw dataset (e.g. keep pairs matching `anat/*_T1w.nii*`). |
 | `MRIQC_MAX_VOXEL_SIZE=2` | mriqc-nidm only, 0.1.3 or later: pass `--max-voxel-size`, leaving T1w/T2w images with a voxel dimension above that many mm out of MRIQC. Must be a positive number. Unset: every T1w, T2w and bold image is rated. See [The container image](#3-the-container-image) for why UCLA_Long needs it. |
 | `BABS_ENV=name` | Micromamba env holding babs (default `babs`). |
-| `BABS_NIDM_DERIV=name` | Which NIDM derivative under `derivatives/` to augment (default `nidm_4.5.0`). This names an existing input folder, `site-<SITE>/derivatives/<name>`; it does not follow the PyNIDM installed on the host, which the BABS jobs never use. See [NIDM versions](#nidm-versions). |
+| `BABS_NIDM_DERIV=name` | Which NIDM derivative under `derivatives/` to augment (default `nidm_5.0.0`, which the default images need; `nidm_4.5.0` with the earlier images to reproduce an earlier run). This names an existing input folder, `site-<SITE>/derivatives/<name>`; it does not follow the PyNIDM installed on the host, which the BABS jobs never use. See [NIDM versions](#nidm-versions). |
 
 ## While the jobs run
 
@@ -196,7 +196,7 @@ Two separate things carry a NIDM version, and they must agree:
 - **The input records.** Each site's `derivatives/nidm_<version>` folder holds the per-subject `nidm.ttl` files the apps augment, written by the PyNIDM release named in the folder. `BABS_NIDM_DERIV` selects the folder; it changes only when someone regenerates the inputs.
 - **The PyNIDM inside each container.** The default images pin `pynidm==5.0.0`: ants-nidm 0.2.3, freesurfer-nidm 0.1.4 and mriqc-nidm 0.1.4 or later. Earlier images (ants-nidm 0.2.2, freesurfer-nidm 0.1.3, mriqc-nidm 0.1.3 and before) pin `pynidm==4.5.0`. This is the PyNIDM that reads and writes NIDM during a job. A PyNIDM installed in your host env has no effect on BABS runs.
 
-Running the PyNIDM 5.0.0 images therefore needs each site's inputs regenerated with PyNIDM 5.0.0 into `derivatives/nidm_5.0.0`, and `BABS_NIDM_DERIV=nidm_5.0.0`. Don't feed records from one PyNIDM version to containers built with another. To reproduce a PyNIDM 4.5.0 run, set the version variables to the earlier images and `BABS_NIDM_DERIV=nidm_4.5.0`. The next PyNIDM release follows the same steps: regenerate the inputs into `derivatives/nidm_<version>`, update the three app repositories and rebuild their images, then change `BABS_NIDM_DERIV` (and its default in `babs_common.sh`).
+Running the PyNIDM 5.0.0 images therefore needs each site's inputs regenerated with PyNIDM 5.0.0 into `derivatives/nidm_5.0.0`, which `BABS_NIDM_DERIV` selects by default. Don't feed records from one PyNIDM version to containers built with another. To reproduce a PyNIDM 4.5.0 run, set the version variables to the earlier images and `BABS_NIDM_DERIV=nidm_4.5.0`. The next PyNIDM release follows the same steps: regenerate the inputs into `derivatives/nidm_<version>`, update the three app repositories and rebuild their images, then change `BABS_NIDM_DERIV` (and its default in `babs_common.sh`).
 
 ## Adding a new BIDS App
 
