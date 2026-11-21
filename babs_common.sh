@@ -269,8 +269,10 @@ babs_check_image() {
         echo "ERROR: ${src} is ${src_size} bytes, longer than its SIF objects (they end at byte ${sif_end}); it is not a plain SIF image." >&2
         exit 1
     fi
-    if ! run_out=$(apptainer exec "$src" true 2>&1); then
-        echo "ERROR: apptainer cannot run a command in ${src}; the image is damaged or incomplete. Rebuild or recopy it:" >&2
+    # Without the configured bind paths and home: a bind path missing on this
+    # host would fail the mount and look like a damaged image.
+    if ! run_out=$(env -u APPTAINER_BINDPATH -u SINGULARITY_BINDPATH apptainer exec --no-home "$src" true 2>&1); then
+        echo "ERROR: apptainer could not run a command in ${src}. Its output below names the cause: a file system that cannot be read (\"executable file not found\", squashfs errors) means the image is damaged or incomplete, so rebuild or recopy it; a mount, namespace or FUSE error means this host cannot run the image." >&2
         echo "$run_out" >&2
         exit 1
     fi
@@ -355,7 +357,15 @@ babs_setup_container() {
        [ -f "${ds_dir}/.datalad/config" ] && \
        grep -q "${container_name}" "${ds_dir}/.datalad/config" 2>/dev/null; then
         if [ -z "$src" ]; then
-            echo "WARNING: ${sif_filename} not found in BASE_DIR or SIF_SEARCH_DIRS, so the registered image cannot be checked against it."
+            # Nothing to compare with: check the registered image on its own,
+            # so a short registration left by an earlier run still stops.
+            echo "WARNING: ${sif_filename} not found in BASE_DIR or SIF_SEARCH_DIRS, so the registered image is checked on its own, not compared with its source." >&2
+            if ! ( babs_check_image "$registered" "$sif_filename" ); then
+                local q
+                q=$(printf %q "$ds_dir")
+                echo "ERROR: the registered image ${registered} failed the check above. Remove the container dataset, provide ${sif_filename} and rerun: chmod -R u+w ${q} && rm -rf ${q}" >&2
+                exit 1
+            fi
         else
             babs_check_image "$src" "$sif_filename"
             babs_check_registered "$registered" "$src" "$ds_dir"
@@ -402,8 +412,9 @@ babs_setup_container() {
             fi
             echo "ERROR: datalad containers-add failed for ${container_name}." >&2
             # containers-add copies the image before it writes the config; a
-            # copy left behind is annexed read-only and blocks a rerun.
-            if [ -e ".datalad/environments/${container_name}" ]; then
+            # copy it has already annexed (a symlink into the annex) is
+            # read-only and blocks a rerun. A plain partial file does not.
+            if [ -L ".datalad/environments/${container_name}/image" ]; then
                 local q
                 q=$(printf %q "$PWD")
                 echo "It left a partial registration. Remove the container dataset and rerun: chmod -R u+w ${q} && rm -rf ${q}" >&2

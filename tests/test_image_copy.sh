@@ -38,7 +38,9 @@ chmod +x "$STUBS/cp"
 # containers-add registers a copy of the image, as datalad does; DL_MODE=fail
 # makes it fail, DL_MODE=short makes the registered copy short, DL_MODE=corrupt
 # registers a copy of the right size with other content, and DL_MODE=partial
-# copies the image and then fails before writing the config.
+# annexes the image and then fails before writing the config,
+# DL_MODE=partialplain leaves a plain partial file and fails, and
+# DL_MODE=noimage writes the config but no image.
 cat > "$STUBS/datalad" <<STUB
 #!/bin/bash
 echo "datalad \$*" >> "\$STUB_DIR/calls.log"
@@ -50,7 +52,15 @@ case "\$1" in
         url="\$3"
         mkdir -p ".datalad/environments/\$name"
         if [ "\${DL_MODE:-ok}" = partial ]; then
-            "$REAL_CP" "\$url" ".datalad/environments/\$name/image"; exit 1
+            mkdir -p .git/annex/objects
+            "$REAL_CP" "\$url" .git/annex/objects/key
+            ln -s ../../../.git/annex/objects/key ".datalad/environments/\$name/image"; exit 1
+        fi
+        if [ "\${DL_MODE:-ok}" = partialplain ]; then
+            head -c 10 "\$url" > ".datalad/environments/\$name/image"; exit 1
+        fi
+        if [ "\${DL_MODE:-ok}" = noimage ]; then
+            echo "[datalad \"containers.\$name\"]" >> .datalad/config; exit 0
         fi
         echo "[datalad \"containers.\$name\"]" >> .datalad/config
         if [ "\${DL_MODE:-ok}" = short ]; then
@@ -78,7 +88,10 @@ case "$1 $2" in
         [ -z "${APPT_SOURCE:-}" ] || echo "org.opencontainers.image.source: $APPT_SOURCE"
         [ -z "${APPT_VERSION:-}" ] || echo "org.opencontainers.image.version: $APPT_VERSION" ;;
     "exec "*)
-        [ -z "${APPT_EXEC_FAIL:-}" ] || { echo 'FATAL: "true": executable file not found in $PATH' >&2; exit 255; } ;;
+        [ -z "${APPT_EXEC_FAIL:-}" ] || { echo 'FATAL: "true": executable file not found in $PATH' >&2; exit 255; }
+        # A bind path missing on this host fails the mount, as apptainer does.
+        [ -z "${APPTAINER_BINDPATH:-}${SINGULARITY_BINDPATH:-}" ] || { echo "FATAL: container creation failed: mount hook function failure" >&2; exit 255; }
+        [ "$2" = --no-home ] || { echo "FATAL: home not disabled" >&2; exit 255; } ;;
     "sif list")
         [ -z "${APPT_SIF_FAIL:-}" ] || { echo "FATAL: failed to load SIF image" >&2; exit 255; }
         if [ -n "${APPT_SIF_GARBLED:-}" ]; then echo "1 1 NONE 0-64 FS"; exit 0; fi
@@ -90,6 +103,14 @@ esac
 exit 0
 STUB
 chmod +x "$STUBS/apptainer"
+
+# mv stand-in: MV_FAIL=1 makes it fail.
+cat > "$STUBS/mv" <<STUB
+#!/bin/bash
+[ -z "\${MV_FAIL:-}" ] || { echo "mv: cannot move" >&2; exit 1; }
+exec "$(command -v mv)" "\$@"
+STUB
+chmod +x "$STUBS/mv"
 
 export STUB_DIR="$TEST_TMPDIR"
 export BASE_DIR="$TEST_TMPDIR/images"
@@ -204,8 +225,11 @@ expect_stop run_siffail "failing sif list" '^ERROR: apptainer cannot list the SI
 # A file of the right size whose file system cannot be read (a sparse or
 # zero-filled copy) is refused.
 run_case ok run_noexec app.sif APPT_EXEC_FAIL=1
-expect_stop run_noexec "image that cannot run a command" '^ERROR: apptainer cannot run a command in'
+expect_stop run_noexec "image that cannot run a command" '^ERROR: apptainer could not run a command in'
 ! grep -q containers-add "$TEST_TMPDIR/calls.log" || { echo "FAIL: an image that cannot run a command reached containers-add"; exit 1; }
+# A bind path configured for jobs is not mounted by the check.
+run_case ok run_bindpath app.sif APPTAINER_BINDPATH=/nonexistent SINGULARITY_BINDPATH=/nonexistent
+[ "$ec" -eq 0 ] || { echo "FAIL: a configured bind path failed the image check (exit $ec)"; cat "$TEST_TMPDIR/run_bindpath.out"; exit 1; }
 # Without apptainer on PATH the source cannot be checked.
 NOAPPT="$TEST_TMPDIR/noappt"
 mkdir -p "$NOAPPT"
@@ -226,6 +250,19 @@ expect_stop run_dlfail "failed containers-add" '^ERROR: datalad containers-add f
 # annexed copy that blocks a rerun: give the removal command.
 run_case ok run_dlpartial app.sif DL_MODE=partial
 expect_stop run_dlpartial "containers-add failing after its copy" "partial registration. Remove the container dataset and rerun: chmod -R u+w .*/run_dlpartial/ants-ds && rm -rf .*/run_dlpartial/ants-ds"
+# A plain partial file (containers-add stopped by a full disk before
+# annexing) does not block a rerun: no removal command.
+run_case ok run_dlpartialplain app.sif DL_MODE=partialplain
+expect_stop run_dlpartialplain "containers-add failing before annexing" '^ERROR: datalad containers-add failed'
+! grep -q 'rm -rf' "$TEST_TMPDIR/run_dlpartialplain.out" || { echo "FAIL: a plain partial file got the removal command"; exit 1; }
+# A registration with no image file says so.
+run_case ok run_dlnoimage app.sif DL_MODE=noimage
+expect_stop run_dlnoimage "registration without an image" 'ants-container/image is missing; expected a copy of .*/app.sif (4096 bytes)'
+# A failed rename of the finished copy stops setup.
+run_case ok run_mvfail app.sif MV_FAIL=1
+expect_stop run_mvfail "failed rename" '^ERROR: could not rename .*app.sif.partial to .*app.sif'
+[ ! -e "$TEST_TMPDIR/run_mvfail/app.sif.partial" ] || { echo "FAIL: a failed rename left the partial copy"; exit 1; }
+! grep -q containers-add "$TEST_TMPDIR/calls.log" || { echo "FAIL: a failed rename reached containers-add"; exit 1; }
 [ ! -e "$TEST_TMPDIR/run_dlfail/app.sif" ] || { echo "FAIL: failed containers-add left the run directory copy"; exit 1; }
 run_case ok run_dlshort app.sif DL_MODE=short
 expect_stop run_dlshort "short registered image" '^ERROR: the registered image .* (10 bytes) differs from .*/app.sif (4096 bytes)'
@@ -263,10 +300,18 @@ expect_stop run_rerun "rerun over a truncated source" 'the image is incomplete'
 head -c 4096 /dev/urandom > "$TEST_TMPDIR/images2/app.sif"
 run_case ok run_rerun app.sif BASE_DIR="$TEST_TMPDIR/images2"
 expect_stop run_rerun "rerun over a rebuilt source" 'differs from .*/images2/app.sif (4096 bytes). If .* was rebuilt'
-# With the source gone, a complete registration is kept with a warning.
+# With the source gone, a complete registration is checked on its own and
+# kept with a warning; a short one (its SIF objects end past its size)
+# still stops.
 rm "$TEST_TMPDIR/images2/app.sif"
+run_case ok run_dlshort app.sif BASE_DIR="$TEST_TMPDIR/images2" APPT_SIF_END=4096
+expect_stop run_dlshort "short registration with the source gone" 'failed the check above. Remove the container dataset, provide app.sif and rerun: chmod -R u+w .*/run_dlshort/ants-ds'
+grep -q 'is 10 bytes, but its SIF objects end at byte 4096' "$TEST_TMPDIR/run_dlshort.out" || { echo "FAIL: short registration with the source gone did not say why"; exit 1; }
 run_case ok run_ok app.sif BASE_DIR="$TEST_TMPDIR/images2"
-[ "$ec" -eq 0 ] && grep -q '^WARNING: app.sif not found' "$TEST_TMPDIR/run_ok.out" || { echo "FAIL: rerun with the source gone did not warn and skip setup (exit $ec)"; cat "$TEST_TMPDIR/run_ok.out"; exit 1; }
+[ "$ec" -eq 0 ] && grep -q '^WARNING: app.sif not found' "$TEST_TMPDIR/run_ok.out" \
+    && ( cd "$TEST_TMPDIR/run_ok" && PATH="$STUBS:$PATH" BASE_DIR="$TEST_TMPDIR/images2" \
+         && source "$REPO_ROOT/babs_common.sh" && babs_log_image_revision() { :; } \
+         && babs_setup_container ants ants-ds ants-container app.sif ) 2>/dev/null | { ! grep -q WARNING; } || { echo "FAIL: rerun with the source gone did not warn and skip setup (exit $ec)"; cat "$TEST_TMPDIR/run_ok.out"; exit 1; }
 
 # A short image already at the final name, as a copy cut short before
 # babs_copy_image existed leaves, is replaced by a full copy.
