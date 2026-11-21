@@ -33,14 +33,18 @@ source "${SCRIPT_DIR}/babs_common.sh"
 APP_NAME="mriqc-nidm"
 SCRATCH_DIR="$SCRATCH_DIR_MRIQC"
 CONTAINER_DS_NAME="mriqc-nidm_bidsapp-container"
-# 0.1.4: PyNIDM 5.0.0 inside the image.
+# 0.1.4: PyNIDM 5.0.0 inside the image. An explicit --nidm-input-dir that is
+# missing or empty is a usage error, and so is an empty bids_dir, output_dir
+# or --mriqc-output-dir.
 # 0.1.5: a subject whose input NIDM file was never fetched (a git-annex link
-# or pointer file with no content) fails before MRIQC runs. An explicit
-# --nidm-input-dir that is missing or empty is a usage error. dwi IQMs are left
-# out of the NIDM conversion and listed in the subject's
-# processing_summary.json. In nidm.ttl, run is an integer (run-01 -> 1) and
-# session, task and acq keep their filename text ("01" stays "01"); earlier
-# versions wrote run "1.0", session "1" and acq 1.0. Pass-through values keep
+# or pointer file with no content) fails before MRIQC runs. dwi in
+# --modalities is a usage error unless --skip-nidm-conversion is passed; when
+# MRIQC rates dwi by default (no --modalities), the app leaves those IQMs out
+# of the NIDM and lists them in the subject's processing_summary.json. In
+# nidm.ttl, run is an integer (run-01 -> 1) and session, task and acq keep
+# their filename text ("01" stays "01"); earlier versions could write run
+# "1.0" (when the subject also had an image without run-), session "1" for
+# ses-01, and acq 1.0. Pass-through values keep
 # their text (--task-id 01 is no longer sent as 1). MRIQC's own participant and
 # session options are refused: BABS passes the app's --participant-label and
 # --session-label. Build it from the mriqc-nidm_bidsapp v0.1.5 tag.
@@ -52,6 +56,7 @@ babs_resolve_version MRIQC_VERSION "$MRIQC_VERSION"
 # reads an option's values as a list from 0.1.3 on; older images keep only
 # the first word and hand MRIQC "-m T -m 1 -m w", which fails every job.
 babs_require_min_version MRIQC_VERSION "$MRIQC_VERSION" 0.1.3 "--modalities in config_mriqc-nidm.yaml"
+babs_require_nidm_match MRIQC_VERSION "$MRIQC_VERSION" 0.1.4
 CONTAINER_NAME="mriqc-nidm-bidsapp-${ZIP_VERSION}"
 SIF_FILENAME="mriqc-nidm_bidsapp-${MRIQC_VERSION}.sif"
 SIF_ALT_PATHS=()   # searched after BASE_DIR; add more via SIF_SEARCH_DIRS in .env

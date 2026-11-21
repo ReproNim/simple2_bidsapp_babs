@@ -205,7 +205,7 @@ $(calls)"
         fail "$script did not complete its first run with ${version_var}=9.8.6 on nidm_5.0.0 (exit $STATUS):
 $(calls)"
     fi
-    run_wrapper "${app}_rerun" "$script" "9.8.6 9.8.7" "${version_var}=9.8.7" BABS_NIDM_DERIV=nidm_4.5.0
+    run_wrapper "${app}_rerun" "$script" "9.8.6 9.8.7" "${version_var}=9.8.7" BABS_NIDM_DERIV=nidm_5.1.0
     if [ "$STATUS" -eq 0 ] || [ -n "$(calls)" ] \
         || [[ "$OUTPUT" != *"babs-${app}\" && babs submit"* ]]; then
         fail "$script rerun over site A's existing project (exit $STATUS) did not stop before babs with the command to submit into it:
@@ -217,12 +217,12 @@ $OUTPUT"
     # run directory. It must render its own: zip under 9.8.7, not 9.8.6, and
     # read the NIDM derivative it was given, not the first run's.
     rm_project
-    run_wrapper "${app}_rerun" "$script" "9.8.6 9.8.7" "${version_var}=9.8.7" BABS_NIDM_DERIV=nidm_4.5.0
+    run_wrapper "${app}_rerun" "$script" "9.8.6 9.8.7" "${version_var}=9.8.7" BABS_NIDM_DERIV=nidm_5.1.0
     if [ "$STATUS" -ne 0 ] \
         || ! grep -qx '    ${subid}: "9-8-7"' "$CASE_DIR/stub/config.yaml" 2>/dev/null \
-        || ! grep -q 'derivatives/nidm_4\.5\.0"' "$CASE_DIR/stub/config.yaml" 2>/dev/null \
+        || ! grep -q 'derivatives/nidm_5\.1\.0"' "$CASE_DIR/stub/config.yaml" 2>/dev/null \
         || grep -q 'nidm_5\.0\.0' "$CASE_DIR/stub/config.yaml" 2>/dev/null; then
-        fail "$script rerun with ${version_var}=9.8.7 BABS_NIDM_DERIV=nidm_4.5.0 (exit $STATUS) did not give babs init a config of its own:
+        fail "$script rerun with ${version_var}=9.8.7 BABS_NIDM_DERIV=nidm_5.1.0 (exit $STATUS) did not give babs init a config of its own:
 $(grep -E 'subid|origin_url' "$CASE_DIR/stub/config.yaml" 2>/dev/null || echo '(no config reached babs init)')"
     fi
 
@@ -232,11 +232,11 @@ $(grep -E 'subid|origin_url' "$CASE_DIR/stub/config.yaml" 2>/dev/null || echo '(
     if [ -z "$rerun_config" ]; then
         fail "$script left no config in its run dir to rerun against"
     else
-        sed -i 's|nidm_4\.5\.0|nidm_5.0.0|' "$rerun_config"
+        sed -i 's|nidm_5\.1\.0|nidm_5.0.0|' "$rerun_config"
         chmod a-w "$rerun_config"
         rm_project
-        run_wrapper "${app}_rerun" "$script" "9.8.6 9.8.7" "${version_var}=9.8.7" BABS_NIDM_DERIV=nidm_4.5.0
-        if [ "$STATUS" -ne 0 ] || ! grep -q 'derivatives/nidm_4\.5\.0"' "$CASE_DIR/stub/config.yaml" 2>/dev/null; then
+        run_wrapper "${app}_rerun" "$script" "9.8.6 9.8.7" "${version_var}=9.8.7" BABS_NIDM_DERIV=nidm_5.1.0
+        if [ "$STATUS" -ne 0 ] || ! grep -q 'derivatives/nidm_5\.1\.0"' "$CASE_DIR/stub/config.yaml" 2>/dev/null; then
             fail "$script rerun over a read-only config (exit $STATUS) did not give babs init a fresh config:
 $(grep origin_url "$CASE_DIR/stub/config.yaml" 2>/dev/null || echo '(no config reached babs init)')"
         fi
@@ -434,6 +434,55 @@ if [ "$STATUS" -eq 0 ] || grep -q '^babs-init' "$CASE_DIR/stub/calls.log"; then
     fail "mriqc wrapper accepted MRIQC_MAX_VOXEL_SIZE for MRIQC_VERSION=0.1.2 (exit $STATUS):
 $(calls)"
 fi
+
+# The input NIDM and the image's PyNIDM must agree: "<script> <version
+# variable> <a version on PyNIDM 4.5.0> <the first version on PyNIDM 5>".
+nidm_pairs=(
+    "ants-nidm_babs_script.sh ANTS_VERSION 0.2.2 0.2.3"
+    "freesurfer-nidm_babs_script.sh FS_VERSION 0.1.3 0.1.4"
+    "mriqc-nidm_babs_script.sh MRIQC_VERSION 0.1.3 0.1.4"
+)
+for entry in "${nidm_pairs[@]}"; do
+    read -r script version_var old new <<< "$entry"
+    app="${script%_babs_script.sh}"
+    run_wrapper "${app}_nidm_old_default" "$script" "$old" "${version_var}=$old"
+    if [ "$STATUS" -eq 0 ] || [ -n "$(calls)" ] || [[ "$OUTPUT" != *"runs PyNIDM 4, but BABS_NIDM_DERIV=nidm_5.0.0"* ]]; then
+        fail "$script with ${version_var}=$old and the nidm_5.0.0 default (exit $STATUS) did not stop before babs:
+$OUTPUT"
+    fi
+    run_wrapper "${app}_nidm_old_4" "$script" "$old" "${version_var}=$old" BABS_NIDM_DERIV=nidm_4.5.0
+    if [ "$STATUS" -ne 0 ]; then
+        fail "$script with ${version_var}=$old BABS_NIDM_DERIV=nidm_4.5.0 exited $STATUS:
+$OUTPUT"
+    fi
+    run_wrapper "${app}_nidm_new_4" "$script" "$new" "${version_var}=$new" BABS_NIDM_DERIV=nidm_4.5.0
+    if [ "$STATUS" -eq 0 ] || [ -n "$(calls)" ] || [[ "$OUTPUT" != *"runs PyNIDM 5, but BABS_NIDM_DERIV=nidm_4.5.0"* ]]; then
+        fail "$script with ${version_var}=$new BABS_NIDM_DERIV=nidm_4.5.0 (exit $STATUS) did not stop before babs:
+$OUTPUT"
+    fi
+    run_wrapper "${app}_nidm_other" "$script" "$old" "${version_var}=$old" BABS_NIDM_DERIV=nidm
+    if [ "$STATUS" -ne 0 ]; then
+        fail "$script with BABS_NIDM_DERIV=nidm (not versioned) exited $STATUS:
+$OUTPUT"
+    fi
+done
+
+# With no version variable set, each wrapper runs the default the README's
+# table names, so the table and the scripts cannot drift apart.
+for entry in "${wrappers[@]}"; do
+    read -r script version_var <<< "$entry"
+    app="${script%_babs_script.sh}"
+    default=$(sed -n "s/^| \`$script\` | \`$version_var\` | \`\([0-9.]*\)\` |$/\1/p" "$REPO_ROOT/README.md")
+    if [ -z "$default" ]; then
+        fail "README.md has no defaults-table row for $script"
+        continue
+    fi
+    run_wrapper "${app}_default" "$script" "$default"
+    if [ "$STATUS" -ne 0 ] || ! grep -qx "containers-add image=${app}_bidsapp-${default}.sif name=${app}-bidsapp-${default//./-}" "$CASE_DIR/stub/calls.log"; then
+        fail "$script with no ${version_var} did not run the README's default $default (exit $STATUS):
+$(calls)"
+    fi
+done
 
 if [ "$failures" -ne 0 ]; then
     echo "$failures wrapper version check(s) failed" >&2

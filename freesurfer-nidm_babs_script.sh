@@ -43,14 +43,14 @@ CONTAINER_DS_NAME="freesurfer-nidm_bidsapp-container"
 # other subjects but not this one, has several nodes for this subject that
 # cannot be told apart, has no nidm:Project, cannot be parsed, or was never
 # fetched. A missing input NIDM is still only a warning. An explicit
-# --nidm-input-dir that is missing or empty is a usage error. nidm.ttl is
-# written only when the conversion succeeds, so a failed conversion leaves an
-# earlier nidm.ttl in place. Build it from the freesurfer-nidm_bidsapp v0.1.4
-# tag.
+# --nidm-input-dir that is missing or empty is a usage error. A failed
+# conversion leaves no nidm.ttl of its own. Build it from the
+# freesurfer-nidm_bidsapp v0.1.4 tag.
 # One variable names the image, the container and the zip version, so a run
 # cannot label one version's outputs with another's number.
 FS_VERSION="${FS_VERSION:-0.1.4}"
 babs_resolve_version FS_VERSION "$FS_VERSION"
+babs_require_nidm_match FS_VERSION "$FS_VERSION" 0.1.4
 CONTAINER_NAME="freesurfer-nidm-bidsapp-${ZIP_VERSION}"
 SIF_FILENAME="freesurfer-nidm_bidsapp-${FS_VERSION}.sif"
 SIF_ALT_PATHS=()   # searched after BASE_DIR; add more via SIF_SEARCH_DIRS in .env

@@ -333,6 +333,25 @@ babs_require_min_version() {
     fi
 }
 
+# The input records and the PyNIDM inside the image must come from the same
+# major PyNIDM release (README, NIDM versions). Judged only when
+# BABS_NIDM_DERIV is named nidm_<X.Y.Z>; another name is not checked.
+# Usage: babs_require_nidm_match <VAR_NAME> <version> <first version on PyNIDM 5>
+babs_require_nidm_match() {
+    local var_name="$1" version="$2" pynidm5_from="$3" image_major deriv_major
+    [[ "$BABS_NIDM_DERIV" =~ ^nidm_([0-9]+)\.[0-9]+\.[0-9]+$ ]] || return 0
+    deriv_major="${BASH_REMATCH[1]}"
+    if [ "$(printf '%s\n%s\n' "$pynidm5_from" "$version" | sort -V | head -1)" = "$pynidm5_from" ]; then
+        image_major=5
+    else
+        image_major=4
+    fi
+    if [ "$deriv_major" != "$image_major" ]; then
+        echo "ERROR: ${var_name}=${version} runs PyNIDM ${image_major}, but BABS_NIDM_DERIV=${BABS_NIDM_DERIV} holds records written by PyNIDM ${deriv_major}. Use images from ${pynidm5_from} on with nidm_5.0.0, or earlier images with nidm_4.5.0." >&2
+        exit 1
+    fi
+}
+
 # Pass mriqc-nidm's --max-voxel-size through bids_app_args.
 # Usage: babs_configure_max_voxel_size <config_path> <mm or empty> <mriqc_version>
 # An empty value leaves every T1w, T2w and bold image rated. The option

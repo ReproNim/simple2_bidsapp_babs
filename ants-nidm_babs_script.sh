@@ -39,15 +39,18 @@ CONTAINER_DS_NAME="ants-nidm_bidsapp-container"
 # 0.2.2: a NIDM input that was never fetched (a git-annex symlink with no
 # content) fails the job, and a subject with no NIDM input is warned about;
 # the image's org.opencontainers.image.version label is the app version.
-# 0.2.3: PyNIDM 5.0.0 inside the image. It reads input NIDM written by PyNIDM 5
-# (and still 4.5). Before any GPU work, the job fails when the input NIDM holds
-# other subjects but not this one, or several nodes for this subject that
-# cannot be resolved; subject ids are matched without the sub- prefix and
-# leading zeros. An explicit --nidm-input-dir that is missing, unreadable or
-# empty is a usage error instead of a warning. nidm.ttl links only the
-# acquisition of the segmented T1w, and label ids outside the selected label
-# protocol are refused. --method quick now initialises from the plain images,
-# so its labels can differ slightly from 0.2.2; fusion output is unchanged.
+# 0.2.3: PyNIDM 5.0.0 inside the image; give it the nidm_5.0.0 inputs. Before
+# any GPU work, the job fails when the input NIDM holds other subjects but not
+# this one, or several nodes for this subject that cannot be resolved; subject
+# ids are matched without the sub- prefix and leading zeros. An explicit
+# --nidm-input-dir that is missing, not searchable or empty is a usage error
+# instead of a warning. nidm.ttl links only the acquisition of the segmented
+# T1w. A label id outside the selected label protocol fails the job after
+# segmentation. --method quick now initialises from the plain images, so its
+# labels can differ from 0.2.2: on most subjects within run-to-run variation,
+# but individual labels can change on some subjects. The fusion code is
+# unchanged; fusion reruns differ from 0.2.2 only by FireANTs' run-to-run
+# variation.
 # Build it from the ants-nidm_bidsapp v0.2.3 tag with scripts/build_sif.sbatch
 # under this name.
 # Older images reproduce older runs: the Caltech babs-ants-nidm-0-2-0
@@ -58,6 +61,7 @@ CONTAINER_DS_NAME="ants-nidm_bidsapp-container"
 # cannot label one version's outputs with another's number.
 ANTS_VERSION="${ANTS_VERSION:-0.2.3}"
 babs_resolve_version ANTS_VERSION "$ANTS_VERSION"
+babs_require_nidm_match ANTS_VERSION "$ANTS_VERSION" 0.2.3
 CONTAINER_NAME="ants-nidm-bidsapp-${ZIP_VERSION}"
 SIF_FILENAME="ants-nidm_bidsapp-${ANTS_VERSION}.sif"
 SIF_ALT_PATHS=()   # searched after BASE_DIR; add more via SIF_SEARCH_DIRS in .env
