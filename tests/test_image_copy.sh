@@ -36,12 +36,13 @@ cat > "$STUBS/datalad" <<STUB
 #!/bin/bash
 echo "datalad \$*" >> "\$STUB_DIR/calls.log"
 case "\$1" in
-    create) mkdir -p "\${@: -1}" ;;
+    create) mkdir -p "\${@: -1}/.datalad"; : > "\${@: -1}/.datalad/config" ;;
     containers-add)
         [ "\${DL_MODE:-ok}" != fail ] || exit 1
         name="\${@: -1}"
         url="\$3"
         mkdir -p ".datalad/environments/\$name"
+        echo "[datalad \"containers.\$name\"]" >> .datalad/config
         if [ "\${DL_MODE:-ok}" = short ]; then
             head -c 10 "\$url" > ".datalad/environments/\$name/image"
         else
@@ -52,12 +53,23 @@ exit 0
 STUB
 chmod +x "$STUBS/datalad"
 
-# apptainer stand-in: APPT_MODE=fail makes inspect fail, as on a file that is
-# not an image; APPT_VERSION sets the version label it reports.
+# apptainer stand-in. APPT_MODE=fail makes inspect and sif list fail, as on a
+# file that is not an image. inspect reports APPT_VERSION as the version
+# label, and an app source label when APPT_SOURCE is set. sif list reports a
+# last object ending at the file size, or at APPT_SIF_END when set.
 cat > "$STUBS/apptainer" <<'STUB'
 #!/bin/bash
 [ "${APPT_MODE:-ok}" != fail ] || { echo "FATAL: not a SIF file" >&2; exit 255; }
-[ -z "${APPT_VERSION:-}" ] || echo "org.opencontainers.image.version: $APPT_VERSION"
+case "$1 $2" in
+    "inspect --labels")
+        [ -z "${APPT_SOURCE:-}" ] || echo "org.opencontainers.image.source: $APPT_SOURCE"
+        [ -z "${APPT_VERSION:-}" ] || echo "org.opencontainers.image.version: $APPT_VERSION" ;;
+    "sif list")
+        end="${APPT_SIF_END:-$(wc -c < "$3")}"
+        echo "ID   |GROUP   |LINK    |SIF POSITION (start-end)  |TYPE"
+        echo "1    |1       |NONE    |32-64                     |Def.FILE"
+        echo "2    |1       |NONE    |64-$end                   |FS (Squashfs/*System/amd64)" ;;
+esac
 exit 0
 STUB
 chmod +x "$STUBS/apptainer"
@@ -144,17 +156,38 @@ expect_stop run_badsrc "unreadable source" '^ERROR: apptainer cannot read'
 
 # A version label that disagrees with the filename stops setup; a matching
 # label goes through.
-run_case ok run_wrongver app_bidsapp-1.2.3.sif APPT_VERSION=1.2.4
+run_case ok run_wrongver app_bidsapp-1.2.3.sif APPT_VERSION=1.2.4 APPT_SOURCE=https://example.org/app
 expect_stop run_wrongver "wrong version label" 'labelled version 1.2.4, but its name asks for 1.2.3'
 ! grep -q containers-add "$TEST_TMPDIR/calls.log" || { echo "FAIL: wrong version label reached containers-add"; exit 1; }
-run_case ok run_rightver app_bidsapp-1.2.3.sif APPT_VERSION=1.2.3
+run_case ok run_rightver app_bidsapp-1.2.3.sif APPT_VERSION=1.2.3 APPT_SOURCE=https://example.org/app
 [ "$ec" -eq 0 ] || { echo "FAIL: matching version label exited $ec"; cat "$TEST_TMPDIR/run_rightver.out"; exit 1; }
+# An image built before the app set its own version label carries its base
+# image's (22.04 on the Ubuntu and CUDA bases), with or without the app's
+# source label; that is not compared.
+run_case ok run_basever app_bidsapp-1.2.3.sif APPT_VERSION=22.04 APPT_SOURCE=https://example.org/app
+[ "$ec" -eq 0 ] || { echo "FAIL: an inherited base-image version label was refused"; cat "$TEST_TMPDIR/run_basever.out"; exit 1; }
+
+# A source shorter than its SIF objects say (a build or copy cut short) is
+# not copied.
+run_case ok run_truncated app.sif APPT_SIF_END=99999
+expect_stop run_truncated "truncated source" 'is 4096 bytes, but its SIF objects end at byte 99999'
+! grep -q containers-add "$TEST_TMPDIR/calls.log" || { echo "FAIL: truncated source reached containers-add"; exit 1; }
 
 # A failed or short registration by containers-add stops setup.
 run_case ok run_dlfail app.sif DL_MODE=fail
 expect_stop run_dlfail "failed containers-add" '^ERROR: datalad containers-add failed'
 run_case ok run_dlshort app.sif DL_MODE=short
 expect_stop run_dlshort "short registered image" '^ERROR: the registered image .* is 10 bytes, expected 4096'
+grep -q "chmod -R u+w '.*/run_dlshort/ants-ds' && rm -rf '.*/run_dlshort/ants-ds'" "$TEST_TMPDIR/run_dlshort.out" \
+    || { echo "FAIL: short registered image error does not give the removal command"; exit 1; }
+# A rerun in the same run directory finds the container registered and must
+# check that copy again rather than skip setup.
+run_case ok run_dlshort
+expect_stop run_dlshort "rerun over a short registered image" '^ERROR: the registered image .* is 10 bytes, expected 4096'
+# A rerun over a complete registration skips setup.
+run_case ok run_ok
+[ "$ec" -eq 0 ] && grep -q 'Container already set up' "$TEST_TMPDIR/run_ok.out" \
+    || { echo "FAIL: rerun over a complete registration did not skip setup (exit $ec)"; cat "$TEST_TMPDIR/run_ok.out"; exit 1; }
 
 # A short image already at the final name, as a copy cut short before
 # babs_copy_image existed leaves, is replaced by a full copy.

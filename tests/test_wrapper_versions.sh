@@ -86,8 +86,16 @@ esac
 exit 0
 EOF
 
-# apptainer: `inspect` finds no revision label.
-printf '#!/bin/bash\nexit 0\n' > "$STUBS/apptainer"
+# apptainer: `inspect` finds no labels; `sif list` reports a complete image, its
+# last object ending at the file size.
+cat > "$STUBS/apptainer" <<'EOF'
+#!/bin/bash
+if [ "$1 $2" = "sif list" ]; then
+    echo "ID   |GROUP   |LINK    |SIF POSITION (start-end)  |TYPE"
+    echo "1    |1       |NONE    |0-$(wc -c < "$3")         |FS (Squashfs/*System/amd64)"
+fi
+exit 0
+EOF
 chmod +x "$STUBS/babs" "$STUBS/datalad" "$STUBS/apptainer"
 
 # The wrappers source ~/.bashrc and call micromamba and module.
