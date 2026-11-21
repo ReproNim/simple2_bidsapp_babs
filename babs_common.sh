@@ -335,12 +335,19 @@ babs_require_min_version() {
 
 # The input records and the PyNIDM inside the image must come from the same
 # major PyNIDM release (README, NIDM versions). Judged only when
-# BABS_NIDM_DERIV is named nidm_<X.Y.Z>; another name is not checked.
+# BABS_NIDM_DERIV is named nidm_<X.Y.Z>; another name (nidm, nidm_5.0,
+# nidm_5.0.0-fix) is deliberately not checked. Each wrapper passes the first
+# app version built on PyNIDM 5; a later PyNIDM release needs a second
+# boundary here, and until then its folders are refused.
 # Usage: babs_require_nidm_match <VAR_NAME> <version> <first version on PyNIDM 5>
 babs_require_nidm_match() {
     local var_name="$1" version="$2" pynidm5_from="$3" image_major deriv_major
     [[ "$BABS_NIDM_DERIV" =~ ^nidm_([0-9]+)\.[0-9]+\.[0-9]+$ ]] || return 0
-    deriv_major="${BASH_REMATCH[1]}"
+    deriv_major=$((10#${BASH_REMATCH[1]}))
+    if [ "$deriv_major" != 4 ] && [ "$deriv_major" != 5 ]; then
+        echo "ERROR: BABS_NIDM_DERIV=${BABS_NIDM_DERIV} holds records written by PyNIDM ${deriv_major}, and no image boundary is known for that release. Add one to babs_require_nidm_match in babs_common.sh." >&2
+        exit 1
+    fi
     if [ "$(printf '%s\n%s\n' "$pynidm5_from" "$version" | sort -V | head -1)" = "$pynidm5_from" ]; then
         image_major=5
     else

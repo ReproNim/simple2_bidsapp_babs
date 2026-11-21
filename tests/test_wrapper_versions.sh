@@ -451,7 +451,8 @@ for entry in "${nidm_pairs[@]}"; do
 $OUTPUT"
     fi
     run_wrapper "${app}_nidm_old_4" "$script" "$old" "${version_var}=$old" BABS_NIDM_DERIV=nidm_4.5.0
-    if [ "$STATUS" -ne 0 ]; then
+    if [ "$STATUS" -ne 0 ] || ! grep -q '^babs-init' "$CASE_DIR/stub/calls.log" \
+        || ! grep -q 'derivatives/nidm_4\.5\.0"' "$CASE_DIR/stub/config.yaml" 2>/dev/null; then
         fail "$script with ${version_var}=$old BABS_NIDM_DERIV=nidm_4.5.0 exited $STATUS:
 $OUTPUT"
     fi
@@ -461,8 +462,21 @@ $OUTPUT"
 $OUTPUT"
     fi
     run_wrapper "${app}_nidm_other" "$script" "$old" "${version_var}=$old" BABS_NIDM_DERIV=nidm
+    if [ "$STATUS" -ne 0 ] || ! grep -q '^babs-init' "$CASE_DIR/stub/calls.log" \
+        || ! grep -q 'derivatives/nidm"' "$CASE_DIR/stub/config.yaml" 2>/dev/null; then
+        fail "$script with BABS_NIDM_DERIV=nidm (not versioned) did not run on that folder (exit $STATUS):
+$OUTPUT"
+    fi
+    # A zero-padded major is the same release.
+    run_wrapper "${app}_nidm_padded" "$script" "$new" "${version_var}=$new" BABS_NIDM_DERIV=nidm_05.0.0
     if [ "$STATUS" -ne 0 ]; then
-        fail "$script with BABS_NIDM_DERIV=nidm (not versioned) exited $STATUS:
+        fail "$script with ${version_var}=$new BABS_NIDM_DERIV=nidm_05.0.0 exited $STATUS:
+$OUTPUT"
+    fi
+    # A release with no known image boundary is refused with that reason.
+    run_wrapper "${app}_nidm_unknown" "$script" "$new" "${version_var}=$new" BABS_NIDM_DERIV=nidm_6.0.0
+    if [ "$STATUS" -eq 0 ] || [ -n "$(calls)" ] || [[ "$OUTPUT" != *"no image boundary is known"* ]]; then
+        fail "$script with BABS_NIDM_DERIV=nidm_6.0.0 (exit $STATUS) did not stop for an unknown PyNIDM release:
 $OUTPUT"
     fi
 done
