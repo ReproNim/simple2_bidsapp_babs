@@ -178,7 +178,10 @@ babs_setup_env() {
 # a partial .sif that datalad containers-add registers for every job.
 # Usage: babs_copy_image <source> <destination>
 babs_copy_image() {
-    local src="$1" dest="$2"
+    local src dest="$2"
+    # Resolve the source first, so a run-dir symlink that the search found is
+    # copied from its target rather than removed as the destination below.
+    src=$(readlink -f "$1")
     local tmp="${dest}.partial"
     local src_size tmp_size
     # A relative BASE_DIR or SIF_SEARCH_DIRS entry resolves inside the run

@@ -229,4 +229,12 @@ run_case ok run_link
 [ "$ec" -eq 0 ] || { echo "FAIL: a symlink to the source in the run dir stopped setup (exit $ec)"; cat "$TEST_TMPDIR/run_link.out"; exit 1; }
 [ "$(wc -c < "$BASE_DIR/app.sif")" = 4096 ] || { echo "FAIL: the source behind a run-dir symlink changed"; exit 1; }
 
+# The same link found through a relative search directory is copied from its
+# target.
+mkdir -p "$TEST_TMPDIR/run_link_rel"
+ln -s "$BASE_DIR/app.sif" "$TEST_TMPDIR/run_link_rel/app.sif"
+run_case ok run_link_rel app.sif BASE_DIR=/nonexistent SIF_SEARCH_DIRS=.
+[ "$ec" -eq 0 ] || { echo "FAIL: a run-dir symlink found through SIF_SEARCH_DIRS=. stopped setup (exit $ec)"; cat "$TEST_TMPDIR/run_link_rel.out"; exit 1; }
+[ "$(wc -c < "$BASE_DIR/app.sif")" = 4096 ] || { echo "FAIL: the source behind a relative run-dir symlink changed"; exit 1; }
+
 echo "PASS: test_image_copy"
