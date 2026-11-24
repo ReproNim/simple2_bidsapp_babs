@@ -109,6 +109,8 @@ The harvest script checks this up front and prints the exact command when it's m
 ./freesurfer-nidm_babs_script.sh Brown study-ADHD200 session
 ```
 
+The container call that BABS generates always passes `participant` as the analysis level, for session-level projects too; the session is selected by `--session-label`. The three apps here accept `participant` together with `--session-label` and run that one session. Without a session label on multi-session data, freesurfer-nidm and mriqc-nidm stop with an error rather than mix sessions.
+
 Where things land:
 
 - **BABS project** (the deliverable): `<DATALAD_SET_DIR>/<study>/site-<SITE>/derivatives/babs-<app>` — deliberately **undated**. The project's own git history records when everything happened; a date in the folder name is redundant provenance that would have to be corrected later (and BABS projects can't be renamed after `babs init` — absolute paths are baked in). If a project already exists there, the wrapper stops before copying anything and prints the ways on: `cd <project> && babs submit` to submit more of that project's jobs, or `BABS_OUTPUT_DIR` set to a new path for a new project. Anything else at that path stops the wrapper too: an empty directory, as a `babs init` that did not finish can leave, is named with the `rmdir` to remove it, and any other directory is not touched. Redoing a site is an explicit decision rather than an accident.
