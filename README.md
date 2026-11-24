@@ -209,12 +209,13 @@ Everything else — argument parsing, container dataset setup, config substituti
 
 ## Tests
 
-Three shell scripts. None needs babs, a cluster or a `.env`:
+Four shell scripts. None needs babs, a cluster or a `.env`:
 
 ```bash
 bash tests/test_babs_pr369.sh         # config templating and the checks in babs_common.sh
-bash tests/test_wrapper_versions.sh   # each wrapper uses one version for its image, container name and zips
+bash tests/test_wrapper_versions.sh   # each wrapper uses one version for its image, container name and zips, and passes on its processing level
 bash tests/test_image_copy.sh          # a damaged or mislabelled image, or a failed, short or changed copy, stops setup
+bash tests/test_args.sh               # the wrappers' positional arguments: count, names, processing level, defaults
 ```
 
-`test_wrapper_versions.sh` runs the three wrappers with stand-ins for `babs`, `datalad` and `apptainer` on `PATH`, in a temporary directory, so nothing is submitted and no image or dataset is read. Run all three after changing a wrapper, `babs_common.sh` or a config template, and after merging `main` into a long-lived branch.
+`test_wrapper_versions.sh` runs the three wrappers with stand-ins for `babs`, `datalad` and `apptainer` on `PATH`, in a temporary directory, so nothing is submitted and no image or dataset is read. Run all four after changing a wrapper, `babs_common.sh` or a config template, and after merging `main` into a long-lived branch.

@@ -14,7 +14,7 @@ trap 'rm -rf "$TEST_TMPDIR"' EXIT
 
 # run_wrapper reads these per call; a value exported by the caller must not
 # reach every case.
-unset CASE_SITE CASE_STUDY CASE_ENV_DROP
+unset CASE_SITE CASE_STUDY CASE_ENV_DROP CASE_LEVEL
 
 STUBS="$TEST_TMPDIR/bin"
 FAKE_HOME="$TEST_TMPDIR/home"
@@ -43,6 +43,7 @@ case "${1:-}" in
         name=""
         while [ $# -gt 0 ]; do
             case "$1" in
+                --processing_level) echo "$2" > "$STUB_DIR/level" ;;
                 --container_name) name="$2" ;;
                 --container_config) cp "$2" "$STUB_DIR/config.yaml" ;;
             esac
@@ -113,7 +114,8 @@ fail() {
 #        is the unversioned <app>_bidsapp.sif> [VAR=value ...]
 # Sets CASE_DIR, STATUS and OUTPUT. Each image file's content is its own name.
 # The site is $CASE_SITE (A by default) and the study $CASE_STUDY (study-TEST
-# by default); $CASE_ENV_DROP names a variable to leave out of the .env.
+# by default); $CASE_ENV_DROP names a variable to leave out of the .env;
+# $CASE_LEVEL, when set, is the wrapper's third argument.
 run_wrapper() {
     local case_name="$1" script="$2" images="$3" site="${CASE_SITE:-A}"
     local study="${CASE_STUDY:-study-TEST}"
@@ -150,7 +152,7 @@ run_wrapper() {
     STATUS=0
     OUTPUT=$(cd "$CASE_DIR/cwd" && env -i PATH="$STUBS:/usr/bin:/bin" HOME="$FAKE_HOME" \
         RUN_DATE=260101 STUB_DIR="$CASE_DIR/stub" "$@" \
-        bash "$REPO_ROOT/$script" "$site" "$study" 2>&1) || STATUS=$?
+        bash "$REPO_ROOT/$script" "$site" "$study" ${CASE_LEVEL:+"$CASE_LEVEL"} 2>&1) || STATUS=$?
 }
 
 calls() { cat "$CASE_DIR/stub/calls.log"; }
@@ -507,6 +509,31 @@ for entry in "${wrappers[@]}"; do
     if [ "$STATUS" -ne 0 ] || ! grep -qx "containers-add image=${app}_bidsapp-${default}.sif name=${app}-bidsapp-${default//./-}" "$CASE_DIR/stub/calls.log"; then
         fail "$script with no ${version_var} did not run the README's default $default (exit $STATUS):
 $(calls)"
+    fi
+done
+
+# The third argument reaches babs and the config. Each wrapper must hand the
+# processing level to babs init and add the session placeholder only for a
+# session-wise project; a wrapper that drops the argument runs subject-wise.
+for entry in "${wrappers[@]}"; do
+    read -r script version_var <<< "$entry"
+    app="${script%_babs_script.sh}"
+    CASE_LEVEL=session run_wrapper "${app}_level_session" "$script" "9.8.7" "${version_var}=9.8.7"
+    if [ "$STATUS" -ne 0 ] || [ "$(cat "$CASE_DIR/stub/level" 2>/dev/null)" != session ] \
+        || ! grep -qx '    \$SESSION_SELECTION_FLAG: "--session-label"' "$CASE_DIR/stub/config.yaml" 2>/dev/null; then
+        fail "$script with the argument session (exit $STATUS) did not run session-wise:
+$OUTPUT"
+    fi
+    run_wrapper "${app}_level_default" "$script" "9.8.7" "${version_var}=9.8.7"
+    if [ "$STATUS" -ne 0 ] || [ "$(cat "$CASE_DIR/stub/level" 2>/dev/null)" != subject ] \
+        || grep -q SESSION_SELECTION_FLAG "$CASE_DIR/stub/config.yaml" 2>/dev/null; then
+        fail "$script with no third argument (exit $STATUS) did not run subject-wise:
+$OUTPUT"
+    fi
+    CASE_LEVEL=run run_wrapper "${app}_level_bad" "$script" "9.8.7" "${version_var}=9.8.7"
+    if [ "$STATUS" -eq 0 ] || [ -n "$(calls)" ] || [[ "$OUTPUT" != *"processing_level must be"* ]]; then
+        fail "$script with the argument run (exit $STATUS) did not stop before babs:
+$OUTPUT"
     fi
 done
 
