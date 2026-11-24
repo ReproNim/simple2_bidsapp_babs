@@ -558,6 +558,11 @@ babs_require_nidm_match() {
 # An empty value leaves every T1w, T2w and bold image rated. The option
 # exists from mriqc-nidm 0.1.3; older images forward it to MRIQC, which
 # rejects it in every job.
+# The mriqc wrapper never reaches the check below with an older image: the
+# --modalities floor (babs_require_min_version) and babs_require_nidm_match
+# (under the default BABS_NIDM_DERIV=nidm_5.0.0, mriqc-nidm below 0.1.4)
+# each refuse it first. The check stays because this function is callable on
+# its own and the floors are independent requirements.
 babs_configure_max_voxel_size() {
     local config_path="$1"
     local max_voxel_size="$2"
