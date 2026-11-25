@@ -432,18 +432,20 @@ for wrapper in "$REPO_ROOT"/*_babs_script.sh; do
     fi
 done
 
-# MRIQC_MAX_VOXEL_SIZE needs mriqc-nidm 0.1.3 or later, judged by the version
-# the wrapper runs: the option reaches the config for 9.8.7 and stops the
-# wrapper before babs for 0.1.2.
+# MRIQC_MAX_VOXEL_SIZE reaches the config for 9.8.7. For 0.1.2 the wrapper
+# stops earlier, at the mriqc-nidm 0.1.3 floor that --modalities needs (and,
+# under the nidm_5.0.0 default, at babs_require_nidm_match); the voxel-size
+# version check in babs_configure_max_voxel_size is unreachable from the
+# wrapper and is tested by the direct calls in test_babs_pr369.sh.
 run_wrapper mriqc_voxel "mriqc-nidm_babs_script.sh" "9.8.7" MRIQC_VERSION=9.8.7 MRIQC_MAX_VOXEL_SIZE=2
 if [ "$STATUS" -ne 0 ] || ! grep -qx '    --max-voxel-size: "2"' "$CASE_DIR/stub/config.yaml" 2>/dev/null; then
     fail "mriqc wrapper with MRIQC_VERSION=9.8.7 MRIQC_MAX_VOXEL_SIZE=2 (exit $STATUS) did not pass --max-voxel-size: \"2\":
 $OUTPUT"
 fi
 run_wrapper mriqc_voxel_old "mriqc-nidm_babs_script.sh" "0.1.2" MRIQC_VERSION=0.1.2 MRIQC_MAX_VOXEL_SIZE=2
-if [ "$STATUS" -eq 0 ] || grep -q '^babs-init' "$CASE_DIR/stub/calls.log"; then
-    fail "mriqc wrapper accepted MRIQC_MAX_VOXEL_SIZE for MRIQC_VERSION=0.1.2 (exit $STATUS):
-$(calls)"
+if [ "$STATUS" -eq 0 ] || [ -n "$(calls)" ] || [[ "$OUTPUT" != *"--modalities in config_mriqc-nidm.yaml needs MRIQC_VERSION 0.1.3 or later, got 0.1.2"* ]]; then
+    fail "mriqc wrapper with MRIQC_VERSION=0.1.2 MRIQC_MAX_VOXEL_SIZE=2 (exit $STATUS) did not stop at the version floor before babs:
+$OUTPUT"
 fi
 
 # The input NIDM and the image's PyNIDM must agree: "<script> <version
