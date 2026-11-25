@@ -26,6 +26,10 @@ git config --file "$FAKE_HOME/.gitconfig" init.defaultBranch main
 
 cat > "$STUBS/babs" <<'EOF'
 #!/bin/bash
+case "$(cat "$STUB_DIR/babs_mode" 2>/dev/null)" in
+    fail) echo "babs: broken install" >&2; exit 3 ;;
+    garbage) echo "usage: babs [-h]"; exit 0 ;;
+esac
 [ "${1:-}" = "--version" ] && echo "babs v0.5.5.dev32+gabcdef123"
 exit 0
 EOF
@@ -42,9 +46,11 @@ cat > "$STUBS/apptainer" <<'EOF'
 exit 0
 EOF
 
-# datalad: `run` executes the command it is given (undoing the {{ }} escapes of
-# the command text, as datalad does) and commits; `save` is recorded with the
-# directory it ran in.
+# datalad: `run` executes the command it is given and commits; `save` is
+# recorded with the directory it ran in. Like datalad, which formats the
+# command with Python's str.format, `run` undoes the {{ }} escapes and fails
+# on a lone { or }; so a script that does not double the braces of the JSON
+# it passes fails here too, without real datalad installed.
 cat > "$STUBS/datalad" <<'EOF'
 #!/bin/bash
 case "${1:-}" in
@@ -60,10 +66,16 @@ case "${1:-}" in
         done
         args=()
         for a in "$@"; do
+            lone="${a//\{\{/}"
+            lone="${lone//\}\}/}"
+            if [[ "$lone" == *[\{\}]* ]]; then
+                echo "datalad: unescaped brace in the command: $a" >&2
+                exit 1
+            fi
             a="${a//\{\{/\{}"
             args+=("${a//\}\}/\}}")
         done
-        echo "datalad-run" >> "$STUB_DIR/calls.log"
+        echo "datalad-run cwd=$PWD" >> "$STUB_DIR/calls.log"
         "${args[@]}"
         git add -A .
         git commit -q -m "$msg" ;;
@@ -105,11 +117,14 @@ make_project() {
         git config -f .gitmodules submodule.sourcedata/BIDS.url /data/raw
         git config -f .gitmodules submodule.sourcedata/NIDM.path sourcedata/NIDM
         git config -f .gitmodules submodule.sourcedata/NIDM.url /data/nidm_5.0.0
+        # Every real project registers its container as a subdataset too.
+        git config -f .gitmodules submodule.containers.path containers
+        git config -f .gitmodules submodule.containers.url /data/containers
         git config -f containers/.datalad/config "datalad.containers.${app}-bidsapp-${dashed}.image" \
             ".datalad/environments/${app}-bidsapp-${dashed}/image"
         cat > "containers/.datalad/environments/${app}-bidsapp-${dashed}/image" <<LABELS
 org.opencontainers.image.revision: 0123456789abcdef0123456789abcdef01234567
-org.opencontainers.image.source: https://github.com/ReproNim/${repo}
+org.opencontainers.image.source: ${LABEL_SOURCE_URL:-https://github.com/ReproNim/${repo}}
 org.opencontainers.image.version: ${version}
 LABELS
         echo ttl > sub-01/ses-1/nidm.ttl
@@ -123,7 +138,7 @@ LABELS
 # Usage: run_script <args...>
 run_script() {
     STATUS=0
-    OUTPUT=$(env -i PATH="$STUBS:/usr/bin:/bin" HOME="$FAKE_HOME" STUB_DIR="$CASE_DIR/stub" \
+    OUTPUT=$(cd "${RUN_CWD:-$PWD}" && env -i PATH="${STUB_PATH:-$STUBS}:/usr/bin:/bin" HOME="$FAKE_HOME" STUB_DIR="$CASE_DIR/stub" \
         bash "$SCRIPT" "$@" 2>&1) || STATUS=$?
 }
 
@@ -200,6 +215,9 @@ $OUTPUT"
 [ "$(head_of)" = "$first" ] || fail "rerun made a new commit"
 [ "$(count_calls datalad-run)" -eq 1 ] || fail "rerun ran datalad run again: $(calls)"
 case "$OUTPUT" in *"up to date"*) ;; *) fail "rerun did not say it is up to date: $OUTPUT" ;; esac
+# The site pointer step still runs on an up-to-date project: the pointer may
+# be stale (the project was committed, then the first run died before it).
+[ "$(count_calls datalad-save)" -eq 2 ] || fail "rerun did not update the site pointer: $(calls)"
 
 # --- differing content stops, and --force replaces it ---------------------
 make_project differs ants-nidm 0.2.3
@@ -246,6 +264,114 @@ git -C "$PROJECT_DIR" -c user.name=T -c user.email=t@e commit -q -am "second con
 run_script "$PROJECT_DIR"
 [ "$STATUS" -ne 0 ] && [ ! -e "$PROJECT_DIR/dataset_description.json" ] || fail "a project with two registered containers was accepted"
 
+
+
+# --- identical files that are not committed are not "up to date" -----------
+# (a `datalad run` interrupted after the command, before its save)
+make_project leftover ants-nidm 0.2.3
+run_script "$PROJECT_DIR"
+cp "$PROJECT_DIR/dataset_description.json" "$PROJECT_DIR/.bidsignore" "$CASE_DIR/"
+git -C "$PROJECT_DIR" reset -q --hard HEAD~1
+cp "$CASE_DIR/dataset_description.json" "$CASE_DIR/.bidsignore" "$PROJECT_DIR/"
+before=$(head_of)
+run_script "$PROJECT_DIR"
+[ "$STATUS" -ne 0 ] || fail "identical untracked files were accepted as up to date"
+case "$OUTPUT" in *"not committed"*) ;; *) fail "no message about the uncommitted files: $OUTPUT" ;; esac
+case "$OUTPUT" in *"up to date"*) fail "untracked files reported up to date: $OUTPUT" ;; esac
+[ "$(head_of)" = "$before" ] && [ "$(count_calls datalad-run)" -eq 1 ] || fail "something was committed despite the untracked files"
+run_script --force "$PROJECT_DIR"
+[ "$STATUS" -eq 0 ] && [ "$(count_calls datalad-run)" -eq 2 ] && git -C "$PROJECT_DIR" cat-file -e HEAD:dataset_description.json \
+    || fail "--force did not commit the untracked files: $OUTPUT"
+
+# --- the image's source label must name this app's repository --------------
+n=0
+for src in https://github.com/someone-else/ants-nidm_bidsapp \
+           https://github.com/ReproNim/mriqc-nidm_bidsapp \
+           https://example.org/mirror/ReproNim/ants-nidm_bidsapp; do
+    n=$((n + 1))
+    LABEL_SOURCE_URL="$src" make_project "wrong_source_$n" ants-nidm 0.2.3
+    run_script "$PROJECT_DIR"
+    [ "$STATUS" -ne 0 ] && [ ! -e "$PROJECT_DIR/dataset_description.json" ] || fail "an image built from $src was accepted"
+    case "$OUTPUT" in *"was built from"*) ;; *) fail "no source-label message for $src: $OUTPUT" ;; esac
+done
+n=0
+for src in http://github.com/ReproNim/ants-nidm_bidsapp.git/ https://github.com/repronim/ants-nidm_bidsapp.git; do
+    n=$((n + 1))
+    LABEL_SOURCE_URL="$src" make_project "label_forms_$n" ants-nidm 0.2.3
+    run_script "$PROJECT_DIR"
+    [ "$STATUS" -eq 0 ] || fail "the label $src (same repository, other spelling) was refused: $OUTPUT"
+done
+
+make_project nolabel ants-nidm 0.2.3
+sed -i '/^org.opencontainers.image.source:/d' "$PROJECT_DIR/containers/.datalad/environments/ants-nidm-bidsapp-0-2-3/image"
+git -C "$PROJECT_DIR" -c user.name=T -c user.email=t@e commit -q -am "old image"
+run_script "$PROJECT_DIR"
+[ "$STATUS" -ne 0 ] && [ ! -e "$PROJECT_DIR/dataset_description.json" ] || fail "an image without a source label was accepted"
+case "$OUTPUT" in *"not supported"*"PyNIDM 5"* | *"PyNIDM 5"*"not supported"*) ;; *) fail "the refusal does not say why: $OUTPUT" ;; esac
+
+# --- the inputs: .gitmodules, the recorded commits, --source-url -----------
+make_project nosources ants-nidm 0.2.3
+git -C "$PROJECT_DIR" rm -q --cached sourcedata/BIDS sourcedata/NIDM
+git -C "$PROJECT_DIR" config -f .gitmodules --remove-section submodule.sourcedata/BIDS
+git -C "$PROJECT_DIR" config -f .gitmodules --remove-section submodule.sourcedata/NIDM
+git -C "$PROJECT_DIR" -c user.name=T -c user.email=t@e commit -q -am "no inputs"
+run_script "$PROJECT_DIR"
+[ "$STATUS" -ne 0 ] && [ ! -e "$PROJECT_DIR/dataset_description.json" ] || fail "a project with no input subdataset was accepted"
+case "$OUTPUT" in *"no input subdataset"*) ;; *) fail "no-inputs message missing: $OUTPUT" ;; esac
+
+make_project nocommit ants-nidm 0.2.3
+git -C "$PROJECT_DIR" config -f .gitmodules submodule.sourcedata/EXTRA.path sourcedata/EXTRA
+git -C "$PROJECT_DIR" config -f .gitmodules submodule.sourcedata/EXTRA.url /data/extra
+git -C "$PROJECT_DIR" -c user.name=T -c user.email=t@e commit -q -am "input without a commit"
+run_script "$PROJECT_DIR"
+[ "$STATUS" -ne 0 ] && [ ! -e "$PROJECT_DIR/dataset_description.json" ] || fail "an input without a recorded commit was accepted"
+case "$OUTPUT" in *"records no commit"*) ;; *) fail "no-commit message missing: $OUTPUT" ;; esac
+
+make_project override ants-nidm 0.2.3
+run_script --source-url sourcedata/BIDS=https://example.org/ds000001 "$PROJECT_DIR"
+[ "$STATUS" -eq 0 ] || fail "--source-url: exit $STATUS: $OUTPUT"
+got=$(jq -c '.SourceDatasets' "$PROJECT_DIR/dataset_description.json")
+want='[{"URL":"https://example.org/ds000001","Version":"1111111111111111111111111111111111111111"},{"URL":"/data/nidm_5.0.0","Version":"2222222222222222222222222222222222222222"}]'
+[ "$got" = "$want" ] || fail "--source-url did not replace one URL.
+want: $want
+got:  $got"
+make_project override_bad ants-nidm 0.2.3
+run_script --source-url sourcedata/NOPE=https://example.org/x "$PROJECT_DIR"
+[ "$STATUS" -ne 0 ] && [ ! -e "$PROJECT_DIR/dataset_description.json" ] || fail "--source-url for an unknown input was accepted"
+run_script --source-url BIDS=https://example.org/x "$PROJECT_DIR"
+[ "$STATUS" -ne 0 ] || fail "a malformed --source-url was accepted"
+
+# --- babs --version ---------------------------------------------------------
+make_project babs_fails ants-nidm 0.2.3
+echo fail > "$CASE_DIR/stub/babs_mode"
+run_script "$PROJECT_DIR"
+[ "$STATUS" -ne 0 ] && [ ! -e "$PROJECT_DIR/dataset_description.json" ] || fail "a failing 'babs --version' was accepted"
+case "$OUTPUT" in *"'babs --version' failed"*"broken install"*) ;; *) fail "no message for a failing 'babs --version': $OUTPUT" ;; esac
+echo garbage > "$CASE_DIR/stub/babs_mode"
+run_script "$PROJECT_DIR"
+[ "$STATUS" -ne 0 ] && [ ! -e "$PROJECT_DIR/dataset_description.json" ] || fail "an unreadable babs version was accepted"
+case "$OUTPUT" in *"could not read a version"*) ;; *) fail "no message for an unreadable babs version: $OUTPUT" ;; esac
+make_project babs_entry ants-nidm 0.2.3
+run_script "$PROJECT_DIR"
+jq -e '.GeneratedBy[1] | .Description | test("installed when this description was written")' \
+    "$PROJECT_DIR/dataset_description.json" >/dev/null 2>&1 || fail "the BABS entry does not say its version is the installed one"
+
+# --- git-annex is required --------------------------------------------------
+make_project noannex ants-nidm 0.2.3
+mkdir -p "$TEST_TMPDIR/bin_no_annex"
+cp "$STUBS/babs" "$STUBS/apptainer" "$STUBS/datalad" "$TEST_TMPDIR/bin_no_annex/"
+STUB_PATH="$TEST_TMPDIR/bin_no_annex" run_script "$PROJECT_DIR"
+[ "$STATUS" -ne 0 ] && [ ! -e "$PROJECT_DIR/dataset_description.json" ] || fail "the script ran without git-annex on PATH"
+case "$OUTPUT" in *"git-annex not found"*) ;; *) fail "no git-annex message: $OUTPUT" ;; esac
+
+# --- a .env in the caller's directory is not run ----------------------------
+make_project dotenv ants-nidm 0.2.3
+mkdir -p "$CASE_DIR/cwd"
+echo "touch '$CASE_DIR/dotenv_ran'" > "$CASE_DIR/cwd/.env"
+RUN_CWD="$CASE_DIR/cwd" run_script "$PROJECT_DIR"
+[ "$STATUS" -eq 0 ] || fail "run from another directory: exit $STATUS: $OUTPUT"
+[ ! -e "$CASE_DIR/dotenv_ran" ] || fail "the script sourced a .env from the caller's directory"
+
 # --- real datalad: the JSON braces in the command text survive a run --------
 if [ -n "$REAL_DATALAD_DIR" ]; then
     make_project real_datalad ants-nidm 0.2.3
@@ -285,6 +411,49 @@ $OUTPUT"
             bash "$SCRIPT" "$PROJECT_DIR" 2>&1) || STATUS=$?
         { [ "$STATUS" -eq 0 ] && case "$OUTPUT" in *"up to date"*) true ;; *) false ;; esac; } \
             || fail "real datalad: rerun is not a no-op: $OUTPUT"
+        run_real() {
+            STATUS=0
+            OUTPUT=$(env -i PATH="$REAL_STUBS:$REAL_DATALAD_DIR:/usr/bin:/bin" HOME="$FAKE_HOME" \
+                bash "$SCRIPT" "$@" 2>&1) || STATUS=$?
+        }
+        site_points_at() { [ "$(git -C "$SITE_DIR" ls-tree HEAD derivatives/babs-ants-nidm-0-2-3 | awk '{print $3}')" = "$(head_of)" ]; }
+        # A stale site pointer (the project's commit exists, the site was not
+        # updated) is fixed by a rerun, which has nothing to write.
+        git -C "$SITE_DIR" reset -q --hard HEAD~1
+        site_points_at && fail "real datalad: the test could not make the site pointer stale"
+        run_real "$PROJECT_DIR"
+        { [ "$STATUS" -eq 0 ] && site_points_at; } || fail "real datalad: a rerun did not update the stale site pointer: $OUTPUT"
+        # Identical files left untracked (an interrupted run) are refused.
+        cp "$PROJECT_DIR/dataset_description.json" "$PROJECT_DIR/.bidsignore" "$CASE_DIR/"
+        git -C "$PROJECT_DIR" reset -q --hard HEAD~1
+        git -C "$SITE_DIR" reset -q --hard HEAD~1
+        cp "$CASE_DIR/dataset_description.json" "$CASE_DIR/.bidsignore" "$PROJECT_DIR/"
+        before=$(head_of)
+        run_real "$PROJECT_DIR"
+        { [ "$STATUS" -ne 0 ] && [ "$(head_of)" = "$before" ]; } || fail "real datalad: untracked identical files were accepted: $OUTPUT"
+        case "$OUTPUT" in *"not committed"*) ;; *) fail "real datalad: no message for the untracked files: $OUTPUT" ;; esac
+
+        # Through a symlink the run record still holds "." as its directory.
+        make_project real_link ants-nidm 0.2.3 plain_project
+        rm -rf "$SITE_DIR/.git" "$PROJECT_DIR/.git"
+        mkdir -p "$CASE_DIR/links"
+        ln -s "$PROJECT_DIR" "$CASE_DIR/links/babs-ants-nidm-0-2-3"
+        if ! (
+            export HOME="$FAKE_HOME"
+            cd "$PROJECT_DIR"
+            datalad create -f -c text2git . >/dev/null
+            git update-index --add --cacheinfo "160000,1111111111111111111111111111111111111111,sourcedata/BIDS"
+            git update-index --add --cacheinfo "160000,2222222222222222222222222222222222222222,sourcedata/NIDM"
+            git add .
+            git commit -q -m harvested
+        ) > "$CASE_DIR/build.log" 2>&1; then
+            fail "could not build the symlink project: $(cat "$CASE_DIR/build.log")"
+        else
+            run_real "$CASE_DIR/links/babs-ants-nidm-0-2-3"
+            [ "$STATUS" -eq 0 ] || fail "real datalad via a symlink: exit $STATUS: $OUTPUT"
+            git -C "$PROJECT_DIR" log -1 --format=%B | grep -q '"pwd": "\."' \
+                || fail "real datalad via a symlink: the run record's pwd is not '.': $(git -C "$PROJECT_DIR" log -1 --format=%B)"
+        fi
     fi
 else
     echo "SKIP: datalad and git-annex not on PATH; the real-datalad case did not run"

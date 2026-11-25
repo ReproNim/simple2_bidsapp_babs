@@ -2,19 +2,28 @@
 # Write the BIDS dataset_description.json and .bidsignore at the root of a
 # harvested BABS derivative project.
 #
-# Usage: ./babs_dataset_description.sh [--force] <project_dir>
+# Usage: ./babs_dataset_description.sh [--force] [--source-url PATH=URL ...] <project_dir>
 #
 #   project_dir   the BABS project root, <site>/derivatives/babs-<app>[-<ver>]
 #   --force       replace a dataset_description.json or .bidsignore that
 #                 already exists with different content (default: stop and
 #                 show the difference)
+#   --source-url PATH=URL
+#                 record URL instead of the .gitmodules URL for the input
+#                 subdataset at PATH (e.g. sourcedata/BIDS), for when the
+#                 input is published at a different address; repeatable
 #
 # Run it once per project, after the study's harvest script (code/post_babs.sh)
 # and with the babs environment active (it needs babs, datalad, git-annex, jq
-# and apptainer on PATH). Everything it writes comes from the project itself:
-# the container registered under containers/, the image's labels, .gitmodules
-# and the commits recorded for the input subdatasets; it stops when one of
-# them is missing.
+# and apptainer on PATH). It reads the app and its version from the container
+# registered under containers/ and checks them against the image's labels;
+# the input URLs come from .gitmodules (or --source-url) and their commits
+# from HEAD; the BABS version is the babs on PATH. It stops when a piece is
+# missing.
+#
+# Supported: projects built from images that carry org.opencontainers.image.*
+# labels (the current releases: ants-nidm 0.2.3, freesurfer-nidm 0.1.4,
+# mriqc-nidm 0.1.5). Projects from older images are refused.
 #
 # The files are written with `datalad run`, so the command is recorded in the
 # commit. When the project is a subdataset of a site dataset, the site's
@@ -22,7 +31,12 @@
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# babs_common.sh sources ./.env from the current directory; this script needs
+# none of it, so source it from / and do not run a .env of the caller's cwd.
+CALLER_PWD="$PWD"
+cd /
 source "${SCRIPT_DIR}/babs_common.sh"
+cd "$CALLER_PWD"
 
 # The BIDS specification release this description claims to follow
 # (https://github.com/bids-standard/bids-specification/releases).
@@ -87,9 +101,15 @@ require_git_access() {   # $1 = repo path, $2 = label
 # ----------------------------------------------------------------------------
 FORCE=no
 PROJECT_ARG=""
+declare -A SOURCE_URL_OVERRIDE=()
 while [ $# -gt 0 ]; do
     case "$1" in
         --force) FORCE=yes ;;
+        --source-url)
+            [ $# -ge 2 ] || { usage >&2; die "--source-url needs PATH=URL"; }
+            [[ "$2" == sourcedata/*=?* ]] || { usage >&2; die "--source-url takes sourcedata/<name>=<URL>, got '$2'"; }
+            SOURCE_URL_OVERRIDE["${2%%=*}"]="${2#*=}"
+            shift ;;
         -h|--help) usage; exit 0 ;;
         -*) usage >&2; die "unknown option $1" ;;
         *)
@@ -165,12 +185,22 @@ IMAGE_PATH="containers/${IMAGE_REL}"
 LABEL_SOURCE=$(babs_image_label "$IMAGE_PATH" org.opencontainers.image.source) || die "apptainer cannot read ${IMAGE_PATH}."
 LABEL_VERSION=$(babs_image_label "$IMAGE_PATH" org.opencontainers.image.version) || die "apptainer cannot read ${IMAGE_PATH}."
 LABEL_REVISION=$(babs_image_label "$IMAGE_PATH" org.opencontainers.image.revision) || die "apptainer cannot read ${IMAGE_PATH}."
-[ -n "$LABEL_SOURCE" ] || die "${IMAGE_PATH} has no org.opencontainers.image.source label, so it cannot be tied to ${CODE_URL}."
-LABEL_SOURCE="${LABEL_SOURCE%/}"
-LABEL_SOURCE="${LABEL_SOURCE%.git}"
-if [ "${LABEL_SOURCE##*/}" != "${CODE_URL##*/}" ]; then
+if [ -z "$LABEL_SOURCE" ]; then
+    die "${IMAGE_PATH} has no org.opencontainers.image.source label, so it cannot be tied to ${CODE_URL}. Images built before the PyNIDM 5 releases (ants-nidm 0.2.3, freesurfer-nidm 0.1.4, mriqc-nidm 0.1.5) carry no such label, and projects built from them are not supported by this script."
+fi
+# Compare the whole repository URL, not its last part: another owner's fork
+# of the same repository name must not pass.
+normalize_url() {
+    local u="${1,,}"
+    u="${u%/}"; u="${u%.git}"; u="${u%/}"
+    u="${u#http://}"; u="${u#https://}"
+    echo "$u"
+}
+if [ "$(normalize_url "$LABEL_SOURCE")" != "$(normalize_url "$CODE_URL")" ]; then
     die "${IMAGE_PATH} was built from ${LABEL_SOURCE}, but the container is named for ${APP_NAME} (${CODE_URL})."
 fi
+LABEL_SOURCE="${LABEL_SOURCE%/}"
+LABEL_SOURCE="${LABEL_SOURCE%.git}"
 [ "$LABEL_VERSION" = "$APP_VERSION" ] || die "${IMAGE_PATH} is labelled version '${LABEL_VERSION}', but the container is named for ${APP_VERSION}."
 # The wrappers register ${repo}-${version}.sif under this container name.
 IMAGE_TAG="${CODE_URL##*/}-${APP_VERSION}.sif"
@@ -181,8 +211,13 @@ else
 fi
 
 # BABS: the project does not record the version that made it, so this is the
-# babs that is running now.
-BABS_VERSION=$(babs --version 2>&1 | tail -1 | sed -E 's/^babs +//; s/^v//')
+# babs that is running now. The entry says so in its Description: a bare
+# Version would read as the version that ran the jobs.
+babs_rc=0
+babs_out=$(babs --version 2>&1) || babs_rc=$?
+[ "$babs_rc" -eq 0 ] || die "'babs --version' failed (exit ${babs_rc}): ${babs_out:-no output}"
+BABS_VERSION=$(tail -1 <<< "$babs_out" | sed -E 's/^babs +//; s/^v//')
+BABS_DESCRIPTION="babs version installed when this description was written; the jobs' version is in the project history."
 [[ "$BABS_VERSION" =~ ^[0-9][0-9A-Za-z.+_-]*$ ]] || die "could not read a version from 'babs --version' (got '${BABS_VERSION}')."
 
 # Inputs: one entry per subdataset under sourcedata/, at the commit the
@@ -194,12 +229,17 @@ while read -r key sub_path; do
     sub_name="${key#submodule.}"
     sub_name="${sub_name%.path}"
     sub_url=$(git config -f .gitmodules "submodule.${sub_name}.url") || die ".gitmodules records no url for ${sub_path}."
+    if [ -n "${SOURCE_URL_OVERRIDE[$sub_path]+x}" ]; then
+        sub_url="${SOURCE_URL_OVERRIDE[$sub_path]}"
+        unset 'SOURCE_URL_OVERRIDE[$sub_path]'
+    fi
     sub_commit=$(git ls-tree HEAD -- "$sub_path" | awk '$1 == "160000" {print $3}')
     [ -n "$sub_commit" ] || die "${sub_path} is in .gitmodules but HEAD records no commit for it."
     SOURCES=$(jq -c --argjson cur "$SOURCES" --arg u "$sub_url" --arg v "$sub_commit" -n '$cur + [{URL: $u, Version: $v}]')
     n_sources=$((n_sources + 1))
 done < <(git config -f .gitmodules --get-regexp '^submodule\..*\.path$' | sort -k2)
 [ "$n_sources" -gt 0 ] || die "no input subdataset under sourcedata/ in ${PROJECT_DIR}/.gitmodules."
+[ "${#SOURCE_URL_OVERRIDE[@]}" -eq 0 ] || die "--source-url names no input subdataset of this project: ${!SOURCE_URL_OVERRIDE[*]}"
 
 # Name: "<study> <site>: <app> <version> derivatives" under
 # <study-X>/<site-Y>/derivatives, the bare "<app> <version> derivatives" elsewhere.
@@ -216,7 +256,7 @@ DESCRIPTION_JSON=$(jq -n \
     --arg name "$DS_NAME" --arg bids "$BIDS_VERSION" \
     --arg app "$APP_NAME" --arg appver "$APP_VERSION" --arg desc "$APP_DESCRIPTION" \
     --arg url "$CODE_URL" --arg tag "$IMAGE_TAG" \
-    --arg babs "$BABS_VERSION" --arg babsurl "$BABS_CODE_URL" \
+    --arg babs "$BABS_VERSION" --arg babsdesc "$BABS_DESCRIPTION" --arg babsurl "$BABS_CODE_URL" \
     --argjson sources "$SOURCES" '{
         Name: $name,
         BIDSVersion: $bids,
@@ -229,7 +269,7 @@ DESCRIPTION_JSON=$(jq -n \
                 CodeURL: $url,
                 Container: {Type: "apptainer", Tag: $tag}
             },
-            {Name: "BABS", Version: $babs, CodeURL: $babsurl}
+            {Name: "BABS", Version: $babs, Description: $babsdesc, CodeURL: $babsurl}
         ],
         SourceDatasets: $sources
     }')
@@ -242,16 +282,26 @@ trap 'rm -rf "$WORK_DIR"' EXIT
 printf '%s\n' "$DESCRIPTION_JSON" > "$WORK_DIR/dataset_description.json"
 printf '%s\n' "$BIDSIGNORE" > "$WORK_DIR/.bidsignore"
 
+# "Up to date" means committed: compare with HEAD, not with the working tree.
+# An identical file that is untracked (a `datalad run` interrupted before its
+# save, or one made by hand) is not part of the project's history, and the
+# dirty check above does not see untracked files.
 need_write=no
 conflict=no
 for f in dataset_description.json .bidsignore; do
-    if [ ! -e "$f" ]; then
+    if git cat-file -e "HEAD:${f}" 2>/dev/null; then
+        git show "HEAD:${f}" > "$WORK_DIR/head_${f}"
+        if ! cmp -s "$WORK_DIR/head_${f}" "$WORK_DIR/$f"; then
+            need_write=yes
+            conflict=yes
+            echo "${f} is committed with different content (- committed, + new):" >&2
+            diff -u --label "HEAD/${f}" --label "new/${f}" "$WORK_DIR/head_${f}" "$WORK_DIR/$f" >&2 || true
+        fi
+    else
         need_write=yes
-    elif ! cmp -s "$f" "$WORK_DIR/$f"; then
-        need_write=yes
-        conflict=yes
-        echo "${f} exists with different content (- existing, + new):" >&2
-        diff -u --label "existing/${f}" --label "new/${f}" "$f" "$WORK_DIR/$f" >&2 || true
+        if [ -e "$f" ] && [ "$FORCE" != yes ]; then
+            die "${f} exists in ${PROJECT_DIR} but is not committed (untracked, for example after an interrupted datalad run), so it is not part of the project's history. Remove it and rerun, or rerun with --force to write and commit it."
+        fi
     fi
 done
 if [ "$conflict" = yes ] && [ "$FORCE" != yes ]; then
@@ -267,6 +317,9 @@ else
     json_arg="${json_arg//\}/\}\}}"
     ignore_arg="${BIDSIGNORE//\{/\{\{}"
     ignore_arg="${ignore_arg//\}/\}\}}"
+    # From the physical root: datalad records the run's directory relative
+    # to the dataset, which through a symlink would be a "../../.." path.
+    cd "$(pwd -P)"
     datalad run -d . \
         -m "Write the BIDS dataset_description.json and .bidsignore" \
         --output dataset_description.json --output .bidsignore \
