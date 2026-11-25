@@ -68,6 +68,16 @@ babs_log_image_revision() {
     echo "Image revision: ${rev:-unknown} ($(basename "$image"))"
 }
 
+# Print one label of an image (empty when the image has no such label); fails
+# when apptainer is missing or cannot read the image.
+# Usage: babs_image_label <image_path> <label_key>
+babs_image_label() {
+    local image="$1" key="$2" appt labels
+    appt=$(type -P apptainer) || return 1
+    labels=$("$appt" inspect --labels "$image" 2>/dev/null) || return 1
+    awk -v k="${key}:" '$1 == k {sub(/^[^ ]+ +/, ""); print; exit}' <<< "$labels"
+}
+
 babs_init_run_date() {
     if [ -z "${RUN_DATE:-}" ]; then
         RUN_DATE=$(date +%y%m%d)
