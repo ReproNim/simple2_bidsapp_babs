@@ -110,6 +110,7 @@ while [ $# -gt 0 ]; do
             [[ "$2" == sourcedata/*=?* ]] || { usage >&2; die "--source-url takes sourcedata/<name>=<URL>, got '$2'"; }
             src_path="${2%%=*}"; src_url="${2#*=}"
             [ -z "${SOURCE_URL_OVERRIDE[$src_path]+x}" ] || die "--source-url given twice for ${src_path}"
+            [[ "$src_url" != =* ]] || die "--source-url: the URL for ${src_path} starts with '=' (write PATH=URL with one '=')"
             [[ ! "$src_url" =~ [[:space:][:cntrl:]] ]] || die "--source-url: the URL for ${src_path} holds whitespace or a control character"
             SOURCE_URL_OVERRIDE["$src_path"]="$src_url"
             shift ;;
@@ -324,6 +325,14 @@ else
             die "${PROJECT_DIR} does not keep text files in git (no annex.largefiles rule covers ${f}), so ${f} would be annexed. The project was created without text2git (BABS_TEXT2GIT=0?). Add the rule and commit it, e.g. 'cd ${PROJECT_DIR} && datalad run-procedure cfg_text2git', then rerun."
         fi
     done
+    # Other untracked files would make datalad run refuse after the leftovers
+    # were deleted, so look before deleting anything.
+    others=$(git status --porcelain | grep -v -x -e '?? dataset_description.json' -e '?? .bidsignore' || true)
+    if [ -n "$others" ]; then
+        echo "ERROR: untracked or changed files besides the two to write in ${PROJECT_DIR}; datalad run needs a clean dataset. Commit or remove them first:" >&2
+        sed 's/^/    /' <<< "$others" >&2
+        exit 1
+    fi
     # Under --force, files that exist without being committed are rewritten:
     # datalad run needs a clean dataset, so remove them first.
     for f in dataset_description.json .bidsignore; do

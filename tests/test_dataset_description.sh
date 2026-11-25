@@ -377,6 +377,26 @@ run_script "$PROJECT_DIR"
 [ "$STATUS" -ne 0 ] && [ ! -e "$PROJECT_DIR/dataset_description.json" ] || fail "a project without a text2git rule was accepted"
 case "$OUTPUT" in *"cfg_text2git"*) ;; *) fail "no text2git message: $OUTPUT" ;; esac
 
+# An "anything" rule annexes everything, text included.
+make_project anything_rule ants-nidm 0.2.3
+echo '* annex.largefiles=anything' > "$PROJECT_DIR/.gitattributes"
+git -C "$PROJECT_DIR" -c user.name=T -c user.email=t commit -q -am "annex everything"
+run_script "$PROJECT_DIR"
+[ "$STATUS" -ne 0 ] && [ ! -e "$PROJECT_DIR/dataset_description.json" ] || fail "a project that annexes all files was accepted"
+case "$OUTPUT" in *"cfg_text2git"*) ;; *) fail "no text2git message for the anything rule: $OUTPUT" ;; esac
+
+# --force with another untracked file: refuse, naming it, and keep the leftovers
+make_project force_stray ants-nidm 0.2.3
+run_script "$PROJECT_DIR"
+cp "$PROJECT_DIR/dataset_description.json" "$PROJECT_DIR/.bidsignore" "$CASE_DIR/"
+git -C "$PROJECT_DIR" reset -q --hard HEAD~1
+cp "$CASE_DIR/dataset_description.json" "$CASE_DIR/.bidsignore" "$PROJECT_DIR/"
+mkdir -p "$PROJECT_DIR/code" && echo x > "$PROJECT_DIR/code/stray.txt"
+run_script --force "$PROJECT_DIR"
+[ "$STATUS" -ne 0 ] && [ -e "$PROJECT_DIR/dataset_description.json" ] && [ -e "$PROJECT_DIR/.bidsignore" ] \
+    || fail "--force with another untracked file deleted the leftovers or was accepted: $OUTPUT"
+case "$OUTPUT" in *"code/"*) ;; *) fail "the stray file is not named: $OUTPUT" ;; esac
+
 # --- --source-url: repeated, empty or multi-line values are refused ----------
 make_project override_repeat ants-nidm 0.2.3
 run_script --source-url sourcedata/BIDS=/a --source-url sourcedata/BIDS=/b "$PROJECT_DIR"
@@ -384,6 +404,11 @@ run_script --source-url sourcedata/BIDS=/a --source-url sourcedata/BIDS=/b "$PRO
 case "$OUTPUT" in *"given twice"*) ;; *) fail "no repeated-path message: $OUTPUT" ;; esac
 run_script --source-url "sourcedata/BIDS=" "$PROJECT_DIR"
 [ "$STATUS" -ne 0 ] || fail "an empty --source-url was accepted"
+run_script --source-url "sourcedata/BIDS=http://a b" "$PROJECT_DIR"
+[ "$STATUS" -ne 0 ] && [ ! -e "$PROJECT_DIR/dataset_description.json" ] || fail "a --source-url with a space was accepted"
+run_script --source-url "sourcedata/BIDS==a" "$PROJECT_DIR"
+[ "$STATUS" -ne 0 ] && [ ! -e "$PROJECT_DIR/dataset_description.json" ] || fail "a --source-url starting with '=' was accepted"
+case "$OUTPUT" in *"starts with '='"*) ;; *) fail "no leading-= message: $OUTPUT" ;; esac
 run_script --source-url "sourcedata/BIDS=http://a
 b" "$PROJECT_DIR"
 [ "$STATUS" -ne 0 ] && [ ! -e "$PROJECT_DIR/dataset_description.json" ] || fail "a --source-url with a newline was accepted"
@@ -462,6 +487,17 @@ $OUTPUT"
         { [ "$STATUS" -eq 0 ] && git -C "$PROJECT_DIR" ls-files -s dataset_description.json .bidsignore | grep -q '^100644' \
             && [ -z "$(git -C "$PROJECT_DIR" status --porcelain)" ] && git -C "$PROJECT_DIR" log -1 --format=%B | grep -q 'DATALAD RUNCMD'; } \
             || fail "real datalad: --force did not replace the untracked files: $OUTPUT"
+
+        # Another untracked file: --force refuses and the leftovers stay.
+        git -C "$PROJECT_DIR" reset -q --hard HEAD~1
+        git -C "$SITE_DIR" reset -q --hard HEAD~1
+        cp "$CASE_DIR/dataset_description.json" "$CASE_DIR/.bidsignore" "$PROJECT_DIR/"
+        mkdir -p "$PROJECT_DIR/code" && echo x > "$PROJECT_DIR/code/stray.txt"
+        run_real --force "$PROJECT_DIR"
+        { [ "$STATUS" -ne 0 ] && [ -e "$PROJECT_DIR/dataset_description.json" ] && [ -e "$PROJECT_DIR/.bidsignore" ]; } \
+            || fail "real datalad: --force with another untracked file deleted the leftovers or was accepted: $OUTPUT"
+        case "$OUTPUT" in *"code/"*) ;; *) fail "real datalad: the stray file is not named: $OUTPUT" ;; esac
+        rm -rf "$PROJECT_DIR/code/stray.txt" "$PROJECT_DIR/dataset_description.json" "$PROJECT_DIR/.bidsignore"
 
         # A project without text2git (yoda only) is refused before anything is written.
         make_project real_yoda ants-nidm 0.2.3
