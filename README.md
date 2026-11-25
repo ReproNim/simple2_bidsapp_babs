@@ -109,7 +109,8 @@ The harvest script checks this up front and prints the exact command when it's m
 ./freesurfer-nidm_babs_script.sh Brown study-ADHD200 session
 ```
 
-The container call that BABS generates always passes `participant` as the analysis level, for session-level projects too; the session is selected by `--session-label`. The three apps here accept `participant` together with `--session-label` and run that one session. Without a session label on multi-session data, freesurfer-nidm and mriqc-nidm stop with an error rather than mix sessions.
+The container call that BABS generates always passes `participant` as the analysis level, for session-level projects too; the session is selected by `--session-label`. The three apps here accept `participant` together with `--session-label` and run that one session (ants-nidm redirects to its session pipeline). What differs is a run on multi-session data without a session label: freesurfer-nidm exits with an error, and mriqc-nidm logs a warning and merges all sessions into one subject-level `nidm.ttl`. Under BABS a session-level project always passes the label, so this matters only for a run outside BABS or for a subject-level project over multi-session data.
+
 
 Where things land:
 
