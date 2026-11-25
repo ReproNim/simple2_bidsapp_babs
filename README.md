@@ -188,17 +188,19 @@ micromamba activate babs
 
 It needs `babs`, `datalad`, `git-annex`, `jq` and `apptainer` on `PATH`. `environment_hpc.yml` covers all but `jq`; add it with `micromamba install -n babs jq` if the environment lacks it. It does not move any output. It writes both files with `datalad run`, so the command is recorded in the commit, and then updates the site dataset's pointer to the project the way `post_babs.sh` does. The files are written after the harvest, not at `babs init`, because a commit outside `code/` before the harvest makes `post_babs.sh` refuse to sync.
 
-What goes into `dataset_description.json`, all read from the project (the script stops when one piece is missing):
+What goes into `dataset_description.json` (the script stops when one piece is missing):
 
 - `Name`, `BIDSVersion` (set in the script), `DatasetType: "derivative"`.
-- `GeneratedBy`, first the app: its name, the version from the registered container's name, its source repository as `CodeURL`, and `Container` with type `apptainer` and the image file name (`<repo>-<X.Y.Z>.sif`, the name the wrappers register). The image's `org.opencontainers.image.*` labels are read and must agree with the container's name; its source revision goes into the entry's `Description`. Then BABS, with the version of the `babs` that is running the script, since the project does not record it.
-- `SourceDatasets`: one entry per subdataset under `sourcedata/`, with the URL from `.gitmodules` and the commit the project records for it. Today these URLs are local paths; they change when the sites are published, and the file is then rewritten with `--force`.
+- `GeneratedBy`, first the app: its name, the version from the registered container's name, its source repository as `CodeURL`, and `Container` with type `apptainer` and the image file name (`<repo>-<X.Y.Z>.sif`, the name the wrappers register). The image's `org.opencontainers.image.*` labels are read and must agree with the container's name; its source revision goes into the entry's `Description`. Then BABS: the version is that of the `babs` installed when the script runs, since the project does not record the one that made it, and the entry's `Description` says so.
+- `SourceDatasets`: one entry per subdataset under `sourcedata/`, with the URL from `.gitmodules` and the commit the project records for it. Today these URLs are local paths, and publishing a site does not change `.gitmodules`. To record the published address, pass `--source-url sourcedata/<name>=<URL>` (repeatable, one per input) together with `--force`.
 
 BIDS requires the first `GeneratedBy` name to be part of the derivative directory name, so the script refuses a project whose folder name does not contain the app name (`ants-nidm`, `freesurfer-nidm` or `mriqc-nidm`). It also refuses a project with no `sub-*/` directory (not harvested), uncommitted changes, or a missing `git-annex`.
 
-The `.bidsignore` lists what BIDS does not define: all `sub-*` bundles, `code/`, `containers/`, `logs/`, `sourcedata/`, the zips and the empty `CHANGELOG.md`, so the validator passes. The price is that the validator checks only the root description; it does not look inside the subjects.
+The `.bidsignore` lists what BIDS does not define: all `sub-*` bundles, `code/`, `containers/`, `logs/`, `sourcedata/`, the zips and the empty `CHANGELOG.md`, so the validator passes. The price is that the validator looks at the root description only loosely (it accepted a description with no `GeneratedBy`, and one with `DatasetType` set to `raw`) and does not look inside the subjects; the script's own tests are the check on the content.
 
-A rerun with identical content changes nothing. If either file already exists with different content, the script prints the difference and stops; `--force` replaces it.
+**Supported projects.** The script reads the app's identity from the image's `org.opencontainers.image.*` labels, which the current releases set (ants-nidm 0.2.3, freesurfer-nidm 0.1.4, mriqc-nidm 0.1.5). Projects built from older images carry no source label and are refused, with that reason; such projects also lack `text2git`, so their text files would be annexed. Rebuild them with the current releases.
+
+A rerun with identical content changes nothing. "Identical" means committed: files that exist but are untracked (for example after an interrupted `datalad run`) are refused with a message, and the site dataset's pointer is updated even when there was nothing to write. If either file already exists with different content, the script prints the difference and stops; `--force` replaces it.
 
 ## Per-app configuration
 
