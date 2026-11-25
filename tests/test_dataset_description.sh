@@ -240,6 +240,12 @@ git -C "$PROJECT_DIR" rm -rq containers && git -C "$PROJECT_DIR" -c user.name=T 
 run_script "$PROJECT_DIR"
 [ "$STATUS" -ne 0 ] && [ ! -e "$PROJECT_DIR/dataset_description.json" ] || fail "a project without a container was accepted"
 
+make_project twocontainers ants-nidm 0.2.3
+git config -f "$PROJECT_DIR/containers/.datalad/config" datalad.containers.ants-nidm-bidsapp-0-2-2.image .datalad/environments/ants-nidm-bidsapp-0-2-2/image
+git -C "$PROJECT_DIR" -c user.name=T -c user.email=t@e commit -q -am "second container"
+run_script "$PROJECT_DIR"
+[ "$STATUS" -ne 0 ] && [ ! -e "$PROJECT_DIR/dataset_description.json" ] || fail "a project with two registered containers was accepted"
+
 # --- real datalad: the JSON braces in the command text survive a run --------
 if [ -n "$REAL_DATALAD_DIR" ]; then
     make_project real_datalad ants-nidm 0.2.3
