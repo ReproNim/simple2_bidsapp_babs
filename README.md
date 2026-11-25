@@ -109,6 +109,8 @@ The harvest script checks this up front and prints the exact command when it's m
 ./freesurfer-nidm_babs_script.sh Brown study-ADHD200 session
 ```
 
+The container call that BABS generates always passes `participant` as the analysis level, for session-level projects too; the session is selected by `--session-label`. The three apps here accept `participant` together with `--session-label` and run that one session (ants-nidm redirects to its session pipeline). What differs is a run on multi-session data without a session label: freesurfer-nidm exits with an error, and mriqc-nidm logs a warning and merges all sessions into one subject-level `nidm.ttl`. Under BABS a session-level project always passes the label, so this matters only for a run outside BABS or for a subject-level project over multi-session data.
+
 Where things land:
 
 - **BABS project** (the deliverable): `<DATALAD_SET_DIR>/<study>/site-<SITE>/derivatives/babs-<app>` — deliberately **undated**. The project's own git history records when everything happened; a date in the folder name is redundant provenance that would have to be corrected later (and BABS projects can't be renamed after `babs init` — absolute paths are baked in). If a project already exists there, the wrapper stops before copying anything and prints the ways on: `cd <project> && babs submit` to submit more of that project's jobs, or `BABS_OUTPUT_DIR` set to a new path for a new project. Anything else at that path stops the wrapper too: an empty directory, as a `babs init` that did not finish can leave, is named with the `rmdir` to remove it, and any other directory is not touched. Redoing a site is an explicit decision rather than an accident.
@@ -234,13 +236,14 @@ Everything else — argument parsing, container dataset setup, config substituti
 
 ## Tests
 
-Four shell scripts. None needs babs, a cluster or a `.env`:
+Five shell scripts. None needs babs, a cluster or a `.env`:
 
 ```bash
 bash tests/test_babs_pr369.sh         # config templating and the checks in babs_common.sh
-bash tests/test_wrapper_versions.sh   # each wrapper uses one version for its image, container name and zips
+bash tests/test_wrapper_versions.sh   # each wrapper uses one version for its image, container name and zips, and passes on its processing level
 bash tests/test_image_copy.sh          # a damaged or mislabelled image, or a failed, short or changed copy, stops setup
+bash tests/test_args.sh               # the wrappers' positional arguments: count, names, processing level, defaults
 bash tests/test_dataset_description.sh # the harvested-project description: content, folder-name rule, refusals, rerun, --force
 ```
 
-`test_dataset_description.sh` builds fake projects with git; when `datalad` and `git-annex` are installed, one case also runs the real `datalad run` and `datalad save`. `test_wrapper_versions.sh` runs the three wrappers with stand-ins for `babs`, `datalad` and `apptainer` on `PATH`, in a temporary directory, so nothing is submitted and no image or dataset is read. Run all four after changing a wrapper, `babs_common.sh` or a config template, and after merging `main` into a long-lived branch.
+`test_dataset_description.sh` builds fake projects with git; when `datalad` and `git-annex` are installed, one case also runs the real `datalad run` and `datalad save`. `test_wrapper_versions.sh` runs the three wrappers with stand-ins for `babs`, `datalad` and `apptainer` on `PATH`, in a temporary directory, so nothing is submitted and no image or dataset is read. Run all five after changing a wrapper, `babs_common.sh` or a config template, and after merging `main` into a long-lived branch.
