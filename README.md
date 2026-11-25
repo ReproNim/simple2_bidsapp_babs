@@ -179,6 +179,31 @@ Failure modes it already handles — the reason not to reimplement it:
 
 There is deliberately **no merged-TTL step**: the deliverable is the per-subject `sub-<id>/nidm.ttl` files, which downstream tools query as a group. Nothing consumes a concatenated `nidm_merge.ttl`, so none is produced.
 
+### Describing the harvested project: `dataset_description.json`
+
+A harvested project is a derivative dataset, but the apps' outputs sit in per-subject bundles (`sub-<id>/nidm.ttl`, the app's `*_cde.ttl`, `stats/`, FreeSurfer's `freesurfer/` tree, MRIQC's nested `mriqc/` dataset) next to BABS's own `code/`, `containers/`, `logs/` and the result zips. None of that is BIDS layout, and the per-subject zip step only archives the subject folder, so nothing at the project root comes from the apps. Run this once per project, **after** `post_babs.sh`, to give the root a BIDS `dataset_description.json` and a `.bidsignore`:
+
+```bash
+micromamba activate babs
+./babs_dataset_description.sh <site>/derivatives/babs-<app>[-<version>]
+```
+
+It needs `babs`, `datalad`, `git-annex`, `jq` and `apptainer` on `PATH`. `environment_hpc.yml` covers all but `jq`; add it with `micromamba install -n babs jq` if the environment lacks it. It does not move any output. It writes both files with `datalad run`, so the command is recorded in the commit, and then updates the site dataset's pointer to the project the way `post_babs.sh` does. The files are written after the harvest, not at `babs init`, because a commit outside `code/` before the harvest makes `post_babs.sh` refuse to sync.
+
+What goes into `dataset_description.json` (the script stops when one piece is missing):
+
+- `Name`, `BIDSVersion` (set in the script), `DatasetType: "derivative"`.
+- `GeneratedBy`, first the app: its name, the version from the registered container's name, its source repository as `CodeURL`, and `Container` with type `apptainer` and the image file name (`<repo>-<X.Y.Z>.sif`, the name the wrappers register). The image's `org.opencontainers.image.*` labels are read and must agree with the container's name; its source revision goes into the entry's `Description`. Then BABS: the version is that of the `babs` installed when the script runs, since the project does not record the one that made it, and the entry's `Description` says so.
+- `SourceDatasets`: one entry per subdataset under `sourcedata/`, with the URL from `.gitmodules` and the commit the project records for it. Today these URLs are local paths, and publishing a site does not change `.gitmodules`. To record the published address, pass `--source-url sourcedata/<name>=<URL>` (repeatable, one per input) together with `--force`.
+
+BIDS requires the first `GeneratedBy` name to be part of the derivative directory name, so the script refuses a project whose folder name does not contain the app name (`ants-nidm`, `freesurfer-nidm` or `mriqc-nidm`). It also refuses a project with no `sub-*/` directory (not harvested), uncommitted changes, or a missing `git-annex`.
+
+The `.bidsignore` lists what BIDS does not define: all `sub-*` bundles, `code/`, `containers/`, `logs/`, `sourcedata/`, the zips and the empty `CHANGELOG.md`, so the validator passes. The price is that the validator looks at the root description only loosely (it accepted a description with no `GeneratedBy`, and one with `DatasetType` set to `raw`) and does not look inside the subjects; the script's own tests are the check on the content.
+
+**Supported projects.** The script reads the app's identity from the image's `org.opencontainers.image.*` labels, which the current releases set (ants-nidm 0.2.3, freesurfer-nidm 0.1.4, mriqc-nidm 0.1.5). Projects built from older images carry no source label and are refused, with that reason. The project must also keep text files in git (`text2git`, which the wrappers set by default through `BABS_TEXT2GIT`): without it both files would be annexed, so the script refuses before writing and says how to add the rule. `--force` also replaces untracked copies of the two files. A project whose rule is only in `git config annex.largefiles` (no `.gitattributes`) is refused too, the safe side.
+
+A rerun with identical content changes nothing. "Identical" means committed: files that exist but are untracked (for example after an interrupted `datalad run`) are refused with a message, and the site dataset's pointer is updated even when there was nothing to write. If either file already exists with different content, the script prints the difference and stops; `--force` replaces it.
+
 ## Per-app configuration
 
 Each app's YAML config sets its SLURM resources, verified against real runs:
@@ -211,13 +236,14 @@ Everything else — argument parsing, container dataset setup, config substituti
 
 ## Tests
 
-Four shell scripts. None needs babs, a cluster or a `.env`:
+Five shell scripts. None needs babs, a cluster or a `.env`:
 
 ```bash
 bash tests/test_babs_pr369.sh         # config templating and the checks in babs_common.sh
 bash tests/test_wrapper_versions.sh   # each wrapper uses one version for its image, container name and zips, and passes on its processing level
 bash tests/test_image_copy.sh          # a damaged or mislabelled image, or a failed, short or changed copy, stops setup
 bash tests/test_args.sh               # the wrappers' positional arguments: count, names, processing level, defaults
+bash tests/test_dataset_description.sh # the harvested-project description: content, folder-name rule, refusals, rerun, --force
 ```
 
-`test_wrapper_versions.sh` runs the three wrappers with stand-ins for `babs`, `datalad` and `apptainer` on `PATH`, in a temporary directory, so nothing is submitted and no image or dataset is read. Run all four after changing a wrapper, `babs_common.sh` or a config template, and after merging `main` into a long-lived branch.
+`test_dataset_description.sh` builds fake projects with git; when `datalad` and `git-annex` are installed, one case also runs the real `datalad run` and `datalad save`. `test_wrapper_versions.sh` runs the three wrappers with stand-ins for `babs`, `datalad` and `apptainer` on `PATH`, in a temporary directory, so nothing is submitted and no image or dataset is read. Run all five after changing a wrapper, `babs_common.sh` or a config template, and after merging `main` into a long-lived branch.
