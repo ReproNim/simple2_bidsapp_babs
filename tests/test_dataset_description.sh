@@ -75,6 +75,11 @@ case "${1:-}" in
             a="${a//\{\{/\{}"
             args+=("${a//\}\}/\}}")
         done
+        # datalad run needs a clean dataset, untracked files included.
+        if [ -n "$(git status --porcelain)" ]; then
+            echo "run(impossible): clean dataset required to detect changes from command" >&2
+            exit 1
+        fi
         echo "datalad-run cwd=$PWD" >> "$STUB_DIR/calls.log"
         "${args[@]}"
         git add -A .
@@ -129,7 +134,8 @@ org.opencontainers.image.version: ${version}
 LABELS
         echo ttl > sub-01/ses-1/nidm.ttl
         : > "sub-01_ses-1_sub-01-${dashed}.zip"
-        git add .gitmodules containers sub-01 "sub-01_ses-1_sub-01-${dashed}.zip"
+        echo '* annex.largefiles=((mimeencoding=binary)and(largerthan=0))' > .gitattributes
+        git add .gitattributes .gitmodules containers sub-01 "sub-01_ses-1_sub-01-${dashed}.zip"
         git commit -q -m "harvested"
     )
 }
@@ -364,6 +370,25 @@ STUB_PATH="$TEST_TMPDIR/bin_no_annex" run_script "$PROJECT_DIR"
 [ "$STATUS" -ne 0 ] && [ ! -e "$PROJECT_DIR/dataset_description.json" ] || fail "the script ran without git-annex on PATH"
 case "$OUTPUT" in *"git-annex not found"*) ;; *) fail "no git-annex message: $OUTPUT" ;; esac
 
+# --- text2git is required ---------------------------------------------------
+make_project notext2git ants-nidm 0.2.3
+git -C "$PROJECT_DIR" rm -q .gitattributes && git -C "$PROJECT_DIR" -c user.name=T -c user.email=t commit -q -m "no text2git"
+run_script "$PROJECT_DIR"
+[ "$STATUS" -ne 0 ] && [ ! -e "$PROJECT_DIR/dataset_description.json" ] || fail "a project without a text2git rule was accepted"
+case "$OUTPUT" in *"cfg_text2git"*) ;; *) fail "no text2git message: $OUTPUT" ;; esac
+
+# --- --source-url: repeated, empty or multi-line values are refused ----------
+make_project override_repeat ants-nidm 0.2.3
+run_script --source-url sourcedata/BIDS=/a --source-url sourcedata/BIDS=/b "$PROJECT_DIR"
+[ "$STATUS" -ne 0 ] && [ ! -e "$PROJECT_DIR/dataset_description.json" ] || fail "a repeated --source-url path was accepted"
+case "$OUTPUT" in *"given twice"*) ;; *) fail "no repeated-path message: $OUTPUT" ;; esac
+run_script --source-url "sourcedata/BIDS=" "$PROJECT_DIR"
+[ "$STATUS" -ne 0 ] || fail "an empty --source-url was accepted"
+run_script --source-url "sourcedata/BIDS=http://a
+b" "$PROJECT_DIR"
+[ "$STATUS" -ne 0 ] && [ ! -e "$PROJECT_DIR/dataset_description.json" ] || fail "a --source-url with a newline was accepted"
+case "$OUTPUT" in *"control character"*) ;; *) fail "no control-character message: $OUTPUT" ;; esac
+
 # --- a .env in the caller's directory is not run ----------------------------
 make_project dotenv ants-nidm 0.2.3
 mkdir -p "$CASE_DIR/cwd"
@@ -432,6 +457,33 @@ $OUTPUT"
         run_real "$PROJECT_DIR"
         { [ "$STATUS" -ne 0 ] && [ "$(head_of)" = "$before" ]; } || fail "real datalad: untracked identical files were accepted: $OUTPUT"
         case "$OUTPUT" in *"not committed"*) ;; *) fail "real datalad: no message for the untracked files: $OUTPUT" ;; esac
+        # --force replaces the untracked copies; real datalad run refuses a dirty dataset.
+        run_real --force "$PROJECT_DIR"
+        { [ "$STATUS" -eq 0 ] && git -C "$PROJECT_DIR" ls-files -s dataset_description.json .bidsignore | grep -q '^100644' \
+            && [ -z "$(git -C "$PROJECT_DIR" status --porcelain)" ] && git -C "$PROJECT_DIR" log -1 --format=%B | grep -q 'DATALAD RUNCMD'; } \
+            || fail "real datalad: --force did not replace the untracked files: $OUTPUT"
+
+        # A project without text2git (yoda only) is refused before anything is written.
+        make_project real_yoda ants-nidm 0.2.3
+        rm -rf "$SITE_DIR/.git" "$PROJECT_DIR/.git" "$PROJECT_DIR/.gitattributes"
+        if ! (
+            export HOME="$FAKE_HOME"
+            cd "$PROJECT_DIR"
+            datalad create -f -c yoda . >/dev/null
+            git update-index --add --cacheinfo "160000,1111111111111111111111111111111111111111,sourcedata/BIDS"
+            git update-index --add --cacheinfo "160000,2222222222222222222222222222222222222222,sourcedata/NIDM"
+            git add .
+            git commit -q -m harvested
+        ) > "$CASE_DIR/build.log" 2>&1; then
+            fail "could not build the yoda-only project: $(cat "$CASE_DIR/build.log")"
+        else
+            before=$(head_of)
+            run_real "$PROJECT_DIR"
+            { [ "$STATUS" -ne 0 ] && [ "$(head_of)" = "$before" ] && [ ! -e "$PROJECT_DIR/dataset_description.json" ]; } \
+                || fail "real datalad: a yoda-only project (no text2git) was accepted: $OUTPUT"
+            case "$OUTPUT" in *"cfg_text2git"*) ;; *) fail "real datalad: no text2git message: $OUTPUT" ;; esac
+        fi
+
 
         # Through a symlink the run record still holds "." as its directory.
         make_project real_link ants-nidm 0.2.3 plain_project

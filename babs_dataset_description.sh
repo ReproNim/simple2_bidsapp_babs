@@ -108,7 +108,10 @@ while [ $# -gt 0 ]; do
         --source-url)
             [ $# -ge 2 ] || { usage >&2; die "--source-url needs PATH=URL"; }
             [[ "$2" == sourcedata/*=?* ]] || { usage >&2; die "--source-url takes sourcedata/<name>=<URL>, got '$2'"; }
-            SOURCE_URL_OVERRIDE["${2%%=*}"]="${2#*=}"
+            src_path="${2%%=*}"; src_url="${2#*=}"
+            [ -z "${SOURCE_URL_OVERRIDE[$src_path]+x}" ] || die "--source-url given twice for ${src_path}"
+            [[ ! "$src_url" =~ [[:space:][:cntrl:]] ]] || die "--source-url: the URL for ${src_path} holds whitespace or a control character"
+            SOURCE_URL_OVERRIDE["$src_path"]="$src_url"
             shift ;;
         -h|--help) usage; exit 0 ;;
         -*) usage >&2; die "unknown option $1" ;;
@@ -311,6 +314,21 @@ fi
 if [ "$need_write" = no ]; then
     echo "dataset_description.json and .bidsignore are up to date."
 else
+    # The files must go into git, not the annex: the comparison above reads
+    # them from git, and a symlink into the annex would read as "different"
+    # on every rerun. text2git (BABS_TEXT2GIT, on by default) sets this rule.
+    for f in dataset_description.json .bidsignore; do
+        rule=$(git check-attr annex.largefiles -- "$f")
+        rule="${rule##*: }"
+        if [ "$rule" = unspecified ] || [ "$rule" = anything ]; then
+            die "${PROJECT_DIR} does not keep text files in git (no annex.largefiles rule covers ${f}), so ${f} would be annexed. The project was created without text2git (BABS_TEXT2GIT=0?). Add the rule and commit it, e.g. 'cd ${PROJECT_DIR} && datalad run-procedure cfg_text2git', then rerun."
+        fi
+    done
+    # Under --force, files that exist without being committed are rewritten:
+    # datalad run needs a clean dataset, so remove them first.
+    for f in dataset_description.json .bidsignore; do
+        if ! git cat-file -e "HEAD:${f}" 2>/dev/null; then rm -f -- "$f"; fi
+    done
     # datalad run treats {...} in the command as a placeholder; {{ and }} are
     # its escapes for literal braces.
     json_arg="${DESCRIPTION_JSON//\{/\{\{}"
